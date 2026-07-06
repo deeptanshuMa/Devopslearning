@@ -325,6 +325,19 @@ these backends make through this URL would silently hit the old staging
 environment instead of the box you're actually setting up. Applies to
 **all 5** backends now that all their `.env` files have been reviewed.
 
+**Confirmed live in usermgmt too**, via its own runtime log:
+
+```
+***othersAPIGatway call***
+methodName, apiUrl,data........ get https://stag-apigateway.bitsrack.com/v1/language/details-code/en {}
+```
+
+So usermgmt's deployed `.env` (not yet shared directly, but proven by this
+log) still has the same `API_GATEWAY_URL=https://stag-apigateway.bitsrack.com/`
+issue — this specific call (`othersAPIGatway`, fetching a language-details
+lookup) is currently going out to the internet and back instead of
+staying on `localhost:3000`. Fix the same way as the other 4.
+
 ## 3c. Backend `.env` — `DB_USER = "postg"` typo
 
 The super-admin, org, **and ticket** `.env` files you shared all have:

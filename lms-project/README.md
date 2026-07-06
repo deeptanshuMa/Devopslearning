@@ -251,3 +251,25 @@ lms-project/
 
 See `import/import-tables.sh` and `import/OLD_DB_ANALYSIS.md` for exactly
 how to handle the per-table CSV restore.
+
+## Networking: firewall the backend ports
+
+usermgmt's logs already show a request for
+`/wp-content/plugins/hellopress/wp_filemanager.php` — that's not part of
+this app (there's no WordPress anywhere in this stack); it's an automated
+vulnerability scanner probing for exposed WordPress installs, and it
+correctly got a 404. Harmless on its own, but it means **the raw Node
+ports are reachable from the public internet** and are already getting
+scanned. Before going further:
+
+- Only the reverse proxy / whatever serves your public domain(s) should
+  be open on 80/443. Ports 3000–3005 (backends + gateway) and 4000–4001
+  (frontends) should be firewalled to localhost/internal traffic only
+  (e.g. `ufw allow from <trusted IPs> to any port <port>` or simply don't
+  open them in your cloud provider's security group — PM2/Node doesn't
+  need them exposed directly if a reverse proxy in front of the gateway is
+  what's actually public).
+- If you do want direct per-service access (e.g. for the Swagger URLs in
+  the service table above), put them behind the same reverse proxy with
+  TLS + the existing `BASIC_AUTH_PASSWORD` protecting `/swagger-doc`,
+  rather than exposing the raw port.
