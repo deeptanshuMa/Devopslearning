@@ -253,6 +253,37 @@ database that's just been restored from the CSV export — worth disabling
 that reseed call (or fixing its "already exists" check) before the actual
 final migration, not just patching around it in this test copy.
 
+## ⚠ Fixed: `time_zones.country_id` — the actual org-create TimeZone dropdown bug
+
+The address fix above didn't resolve the org-create "TimeZone: Nothing
+found" dropdown — because that dropdown queries a completely different
+table. It calls `GET /v1/regional/timezones/:country_id` (a usermgmt
+route), which reads `time_zones` directly — not `address`. `time_zones`
+(427 rows) was never touched by usermgmt's reseed, so every single row
+still points at the old, now-deleted country IDs — this affects **every**
+country, not just the one first tried (confirmed: India and United States
+both returned empty).
+
+**Fix**: `import/fix-timezones-country-links.sh` — same old-name →
+new-id remapping technique as the address fix, but applied directly to
+`time_zones.country_id` (a lookup table's own linkage, not a historical
+per-row reference, so it's a simpler, one-column repair — just needs
+`countries.csv`, not `address.csv`/`states.csv`). Verified in Postgres 16
+with a synthetic India/US case (matching the real bug pattern exactly):
+before the fix, 0 of 3 timezone rows resolved against the current
+`countries` table; after, all 3 resolved to the correct country by name
+(`Asia/Kolkata` → India, `America/New_York`/`America/Chicago` → United
+States).
+
+Usage:
+```bash
+DB_PASSWORD=... bash fix-timezones-country-links.sh user_management_old_restore ./clean/user_management
+```
+The script prints a before/after count of how many `time_zones` rows
+resolve against the current `countries` table — `still_broken` should be
+0 (or very close) afterward. Same caveat as the address fix: a historical
+country name with no exact match in the current table won't resolve.
+
 ## Key problem found: "migration script not importing the complete DB"
 
 There is **no real migration system** in any of these repos — no
@@ -413,6 +444,9 @@ lms-project/
     fix-orphaned-authors.sql       - reinstates 15 skipped authors rows that books.author_id needs
     fix-address-regional-links.sh  - repairs address.country_id/state_id after usermgmt's own
                                       reseed replaced countries/states with new IDs
+    fix-timezones-country-links.sh - repairs time_zones.country_id after the same reseed
+                                      (this is the one that actually fixes the org-create
+                                      TimeZone dropdown)
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
     CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
