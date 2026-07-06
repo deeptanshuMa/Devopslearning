@@ -206,6 +206,53 @@ warning for any table, check the model's `config/database.js` for
 else references it, dropped rows can resurface as a dangling FK
 elsewhere, exactly like this.
 
+## ⚠ Fixed: usermgmt's own reseed orphaned `address.country_id`/`state_id`
+
+Found while chasing the org-create timezone dropdown bug (see below): the
+running `usermgmt` service's own startup reseed **replaced** the entire
+`countries`/`states`/`cities` tables with freshly-generated rows (same row
+counts — 250/5084/150,573 — but new random UUIDs and today's
+`createdAt`, not the historical 2023/2024 timestamps), rather than
+skipping because CSV-imported data already existed. `time_zones` (427
+rows) was never touched by that reseed and still resolves fine. But
+`address.country_id`/`state_id` — pointing at the now-deleted historical
+country/state rows — ended up `NULL` for all 433 rows (418 originally had
+a `country_id`, 409 a `state_id`, confirmed against the original CSV),
+apparently zeroed out by something in the currently-deployed usermgmt
+code once those references stopped resolving (not something
+`import-tables.sh` did — the import itself completed cleanly with no
+warnings for this table).
+
+**Fix**: `import/fix-address-regional-links.sh` — since the reseeded
+`countries`/`states` presumably contain the same *names*, just new IDs,
+it reads the original `address.csv`/`countries.csv`/`states.csv` (the
+normalized folder from `prepare-csv-dir.sh`) to recover each address
+row's old country/state **name** via its old ID, then re-resolves that
+name against the *current* `countries`/`states` tables and updates the
+live `address` rows accordingly (state matched by name **and** current
+`country_id` together, to disambiguate any state names that repeat across
+countries). Verified end-to-end in Postgres 16 against the exact
+Australia/Tasmania row from the real export: after reseeding
+`countries`/`states` with brand-new IDs and nulling the address row (to
+reproduce the bug), the script correctly re-resolved both fields back to
+the new Australia/Tasmania rows by name.
+
+Usage:
+```bash
+DB_PASSWORD=... bash fix-address-regional-links.sh user_management_old_restore ./clean/user_management
+```
+(needs `address.csv`, `countries.csv`, `states.csv` in that directory —
+the same one already used for the original import). Any address whose
+historical country/state name doesn't have an exact-match row in the
+current tables won't resolve — worth spot-checking the before/after
+counts the script prints against the original 418/409.
+
+**This will very likely recur on the real production cutover** unless
+usermgmt's regional-data reseed is prevented from running against a
+database that's just been restored from the CSV export — worth disabling
+that reseed call (or fixing its "already exists" check) before the actual
+final migration, not just patching around it in this test copy.
+
 ## Key problem found: "migration script not importing the complete DB"
 
 There is **no real migration system** in any of these repos — no
@@ -363,6 +410,9 @@ lms-project/
                                       all 4 Postgres-backed services' models)
     prepare-csv-dir.sh             - normalizes the old DB export's filenames into <table>.csv,
                                       with flags to drop known-orphaned tables
+    fix-orphaned-authors.sql       - reinstates 15 skipped authors rows that books.author_id needs
+    fix-address-regional-links.sh  - repairs address.country_id/state_id after usermgmt's own
+                                      reseed replaced countries/states with new IDs
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
     CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
