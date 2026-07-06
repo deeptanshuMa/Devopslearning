@@ -31,8 +31,12 @@
 # `address`, `student_parent` — these don't match the model's variable
 # name).
 #
-# Set TRUNCATE_FIRST=true to empty each target table before loading, useful
-# if an earlier partial/failed import already put some rows in.
+# Set TRUNCATE_FIRST=true to empty every target table in this <csv_dir>
+# before loading, useful if an earlier partial/failed import already put
+# some rows in. All tables in the batch are truncated together in one
+# CASCADE statement (see comment in the script) — if some OTHER table
+# outside this batch (not one of the CSVs you're importing) has a foreign
+# key into one of these tables, CASCADE will empty that table too.
 
 set -euo pipefail
 
@@ -64,6 +68,31 @@ trap 'rm -f "$SQL_FILE"' EXIT
 
 {
   echo "SET session_replication_role = replica;"
+
+  # If truncating, do ALL tables in ONE combined TRUNCATE statement, before
+  # any COPY starts. Truncating tables one at a time (in alphabetical/glob
+  # order) fails outright on any table referenced by an FK from another
+  # table in this same batch (Postgres always enforces this for TRUNCATE,
+  # regardless of session_replication_role) — and naively adding CASCADE to
+  # each individual TRUNCATE is worse: it can silently wipe out a table
+  # that already got its fresh data loaded earlier in this same run, if
+  # that table happens to reference one being truncated later (e.g.
+  # "acknowledgement_attachments" sorts and loads before
+  # "acknowledgements", which it has an FK to — a later per-table CASCADE
+  # truncate of "acknowledgements" would cascade-delete the
+  # already-reloaded attachments rows, with nothing left to reload them).
+  # Truncating every table in the batch together, up front, avoids that
+  # ordering hazard entirely.
+  if [ "$TRUNCATE_FIRST" = "true" ]; then
+    tablespec=""
+    for f in "${csv_files[@]}"; do
+      table="$(basename "$f" .csv)"
+      if [ -n "$tablespec" ]; then tablespec+=","; fi
+      tablespec+="\"${table}\""
+    done
+    echo "TRUNCATE TABLE ${tablespec} CASCADE;"
+  fi
+
   for f in "${csv_files[@]}"; do
     table="$(basename "$f" .csv)"
     abspath="$(realpath "$f")"
@@ -88,9 +117,6 @@ trap 'rm -f "$SQL_FILE"' EXIT
       colspec+="\"${c}\""
     done
 
-    if [ "$TRUNCATE_FIRST" = "true" ]; then
-      echo "TRUNCATE TABLE \"${table}\";"
-    fi
     echo "\\echo Importing ${table}..."
     echo "\\copy \"${table}\"(${colspec}) FROM '${abspath}' WITH (FORMAT csv, HEADER true)"
   done

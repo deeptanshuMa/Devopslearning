@@ -84,6 +84,29 @@ don't need re-importing. `countries` is the one to redo (with
 going forward, that's this same class of bug — the fix now handles it
 automatically.
 
+## ⚠ Fixed: `TRUNCATE_FIRST=true` failed on tables with foreign keys
+
+Follow-up bug in the same script, hit next: truncating tables one at a
+time (in alphabetical/glob order) fails outright the moment one table in
+the batch is referenced by another via FK — e.g.
+`TRUNCATE TABLE "acknowledgement_categories"` errors with "cannot truncate
+a table referenced in a foreign key constraint" because `acknowledgements`
+references it. Adding a per-table `CASCADE` would have "fixed" the error
+but introduced a worse, silent bug: `acknowledgement_attachments` sorts
+and loads *before* `acknowledgements` alphabetically, so a later
+per-table `CASCADE` truncate of `acknowledgements` would have
+cascade-deleted the attachments rows that had just been freshly reloaded a
+moment earlier in the same run — with nothing left to reload them, since
+that file was already processed. Fixed `import-tables.sh` to truncate
+every table in the batch together in a single combined `TRUNCATE TABLE
+t1, t2, ..., tN CASCADE` statement, up front, before any `\copy` runs —
+verified against a live 3-table FK chain
+(`acknowledgement_attachments → acknowledgements → acknowledgement_categories`)
+run through `TRUNCATE_FIRST=true` twice in a row: all three end up with
+their correct row counts (4/25/18) both times, no data loss.
+**Re-`git pull`/re-copy `import-tables.sh` again** if you copied it before
+this fix.
+
 ## Key problem found: "migration script not importing the complete DB"
 
 There is **no real migration system** in any of these repos — no
