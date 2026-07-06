@@ -1,0 +1,27 @@
+# Drop-in replacement for API-gatway-staging/app/config/gateway.config.yml
+# Only the `serviceEndpoints` block changes vs. the staging version — the
+# staging file hardcodes Kubernetes ClusterIPs (e.g. 10.99.9.117) that only
+# resolve inside that cluster. Everything else (apiEndpoints, policies,
+# pipelines) can stay as-is; copy them over from the original file.
+#
+# If tickets/notification are on a different host, change those two lines
+# only — otherwise leave them pointing at localhost.
+
+http:
+  port: 3000
+
+# ... keep the existing `apiEndpoints:` block from the staging file verbatim ...
+
+serviceEndpoints:
+  usersService:
+    url: "http://localhost:3001/"
+  superAdminService:
+    url: "http://localhost:3002/"
+  organizationAdminService:
+    url: "http://localhost:3003/"
+  ticketsService:
+    url: "http://localhost:3004/"
+  notificationService:
+    url: "http://localhost:3005/"
+
+# ... keep the existing `policies:` and `pipelines:` blocks verbatim ...
