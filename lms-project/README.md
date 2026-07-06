@@ -35,6 +35,15 @@ Mongoose, entirely separate from the Postgres side. On the new server
 you'll run your own local (or managed) Postgres + MongoDB instances and
 point every service's `.env` at them.
 
+## ⚠ Known crash: super-admin dies on startup when `countries` is empty
+
+`lms-backend-super-admin-staging` will crash the whole process a few
+seconds after boot if its `countries` table has zero rows (true for a
+fresh DB, or a partially-completed restore). Root cause is two stacked
+bugs in `organization.controller.js`'s `importData` — full diagnosis,
+operational workaround, and code patch in `fixes/NOTES.md` item 0. Check
+that first if the service won't stay up.
+
 ## Key problem found: "migration script not importing the complete DB"
 
 There is **no real migration system** in any of these repos — no

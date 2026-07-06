@@ -3,6 +3,157 @@
 These repos aren't in this git remote's scope, so the fixes are documented
 here rather than committed directly to them. Apply manually.
 
+## 0. CRITICAL: `lms-backend-super-admin-staging` crashes the whole process on startup when `countries` is empty
+
+This is what's behind:
+
+```
+Error(delete organization branch).. TypeError: Cannot read properties of undefined (reading 'headers')
+    at importData (.../src/controller/organization.controller.js:1301:11)
+...
+Error: Transaction cannot be rolled back because it has been finished with state: commit
+    at Transaction.rollback (.../node_modules/sequelize/lib/transaction.js:59:13)
+    at importData (.../src/controller/organization.controller.js:1307:25)
+```
+
+**Root cause — two bugs stacked together in `organization.controller.js`:**
+
+`importData` (`src/controller/organization.controller.js:1288`) is
+dual-purposed: it's wired as a normal Express route
+(`router.get("/import", importData)` in `organization.router.js`) *and*
+called directly with **zero arguments** from
+`scripts/defaultValues.js:36` (`addDefaultRegionalDetails()`, which
+`config/database.js` calls unconditionally 3 seconds after every
+`sequelize.sync()`, whenever `super_admin.countries` is empty):
+
+```js
+// defaultValues.js
+const addDefaultRegionalDetails = async () => {
+  const regionalDetailsExist = await getCountOfCountriesService();
+  if (regionalDetailsExist) {
+    console.log("Regional Details Already Existed.!");
+  } else {
+    importData();   // <-- called with no req/res
+  }
+};
+```
+
+1. When called this way, `req` is `undefined` inside `importData`. The
+   success-path response line —
+   `sendResponse(req, res, ..., req.headers.lang)` — evaluates
+   `req.headers.lang` as an argument and throws `TypeError: Cannot read
+   properties of undefined (reading 'headers')` before `sendResponse` is
+   even reached. This throws inside the `try`, so it always ends up in
+   the `catch`.
+2. `transaction.commit()` a few lines earlier is called **without
+   `await`**. By the time the `catch` block runs, that commit has already
+   resolved (or is racing to). The `catch` unconditionally calls `await
+   transaction.rollback()`, which throws `Transaction cannot be rolled
+   back because it has been finished with state: commit` — a **second,
+   unhandled** error thrown inside an async catch block with nothing
+   further to catch it, which crashes the entire Node process (this is
+   why you saw two separate stack traces — the second one killed the
+   service, not just the request).
+
+**Net effect: every time `super_admin`'s `countries` table is empty at
+startup, this service will crash ~3 seconds after boot.** This will
+happen on a truly fresh database (before you've imported anything) and
+will keep happening on every restart until `countries` has at least one
+row.
+
+**Operational workaround (no code change, use this now):** since the old
+CSV export's `Super Admin/public_countries_export_*.csv` has 250 rows
+(see `import/CSV_AUDIT.md`), importing it via `import/import-tables.sh`
+before/after the first boot resolves the trigger condition —
+`getCountOfCountriesService()` will return >0 and `importData()` won't be
+called again. The very first boot against a brand-new empty database will
+still crash 3 seconds in (expected — `sequelize.sync()` will have already
+finished creating the schema by then, so this is harmless: let it crash,
+import your CSVs, then restart).
+
+**Real fix (recommended regardless):** patch `importData` to (a) not
+touch `req`/`res` when they're absent, and (b) not blindly roll back an
+already-committed transaction:
+
+```diff
+ const importData = async (req, res) => {
++  let transaction;
+   try {
+     transaction = await sequelize.transaction();
+-    // const fileData = await importStudentService(req?.file);
+     await bulkCountriesEntry();
+-    transaction.commit();
+-    return sendResponse(
+-      req,
+-      res,
+-      constants.WEB_STATUS_CODE.OK,
+-      constants.STATUS_CODE.SUCCESS,
+-      "REQUEST.ADDED",
+-      null,
+-      req.headers.lang
+-    );
++    await transaction.commit();
++    if (res) {
++      return sendResponse(
++        req,
++        res,
++        constants.WEB_STATUS_CODE.OK,
++        constants.STATUS_CODE.SUCCESS,
++        "REQUEST.ADDED",
++        null,
++        req?.headers?.lang
++      );
++    }
+   } catch (err) {
+-    console.log("Error(delete organization branch)..", err);
+-
+-    if (transaction) {
+-      await transaction.rollback();
+-    }
+-    return sendResponse(
+-      req,
+-      res,
+-      constants.WEB_STATUS_CODE.SERVER_ERROR,
+-      constants.STATUS_CODE.FAIL,
+-      "GENERAL.GENERAL_ERROR_CONTENT",
+-      { message: err?.message },
+-      req.headers.lang
+-    );
++    console.log("Error(import regional data)..", err);
++    if (transaction && !transaction.finished) {
++      await transaction.rollback();
++    }
++    if (res) {
++      return sendResponse(
++        req,
++        res,
++        constants.WEB_STATUS_CODE.SERVER_ERROR,
++        constants.STATUS_CODE.FAIL,
++        "GENERAL.GENERAL_ERROR_CONTENT",
++        { message: err?.message },
++        req?.headers?.lang
++      );
++    }
+   }
+ };
+```
+
+(The `transaction && !transaction.finished` guard — Sequelize sets
+`transaction.finished` to `"commit"` or `"rollback"` once it's done —
+is the general-purpose fix for "rollback after already-committed", worth
+applying anywhere else this pattern shows up.)
+
+**Same anti-pattern (un-awaited `transaction.commit()` + unconditional
+`rollback()` in `catch`) also appears, unpatched, at**
+`organization.controller.js:662`, `:1326` (`updateRegionalDetails` — safe
+in practice, since it never touches `req`/`res`), `:1373`, and
+`languages.controller.js:234`. None of these are currently known to
+crash the process the way `importData` does (they're not called
+argument-less from a startup script), but they're the same latent risk if
+a rollback is ever attempted after a commit that already resolved. Worth
+an `await` + `!transaction.finished` pass across the file if you're
+touching this code anyway.
+
 ## 1. `lms-backend-usermgmt-staging/app/config/database.js` — disabled seeders
 
 **Only matters if you are NOT restoring a full CSV data dump** (i.e. you're
