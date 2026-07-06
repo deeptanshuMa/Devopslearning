@@ -79,21 +79,24 @@ NEXT_PUBLIC_API=http://localhost:3000/
 
 ## 3b. Backend `.env` — `API_GATEWAY_URL` still points at the live domain
 
-The super-admin and org `.env` files you shared both have:
+The super-admin, org, **and ticket** `.env` files you shared all have:
 
 ```
 API_GATEWAY_URL="https://stag-apigateway.bitsrack.com/"
 ```
 
+(Notification's has the same thing, just without the `s` — `http://stag-apigateway.bitsrack.com/`.)
+
 You confirmed this should instead point at the new VPS's own local
 gateway, i.e. `API_GATEWAY_URL=http://localhost:3000/` (matches
 `setup/env-templates/*.env.example`) — otherwise any inter-service call
 these backends make through this URL would silently hit the old staging
-environment instead of the box you're actually setting up.
+environment instead of the box you're actually setting up. Applies to
+**all 5** backends now that all their `.env` files have been reviewed.
 
 ## 3c. Backend `.env` — `DB_USER = "postg"` typo
 
-Both the super-admin and org `.env` files you shared have:
+The super-admin, org, **and ticket** `.env` files you shared all have:
 
 ```
 DB_USER = postg

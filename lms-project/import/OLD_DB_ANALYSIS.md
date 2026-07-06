@@ -13,6 +13,12 @@ dev_database/
 
 No "Notification" folder — see why below.
 
+For a data-quality pass over the actual contents (row counts, referential
+integrity, encoding, empty tables) rather than just the folder/filename
+structure, see `CSV_AUDIT.md` — short version: it's clean, no orphaned
+foreign keys anywhere, no ragged/duplicate/blank-ID rows, no encoding
+issues.
+
 Filename pattern is `public_<table_name>_export_<date>_<time>.csv`, e.g.
 `public_users_export_2024-04-10_184114.csv` → table `users`. Stripping that
 prefix/suffix gives you the exact Postgres table name for every file
@@ -39,9 +45,15 @@ the dedicated `lms-backend-ticket-staging` service. The **current**
 `super-admin` and `org` model sets have no models for these tables at all,
 so `sequelize.sync()` will never create them in `super_admin` or
 `organization` — importing these 4 files into either DB will fail with
-`relation "..." does not exist`, and if it didn't fail it'd just be stale,
-superseded data anyway. Skip these 8 files entirely; the correct home for
-this data is the `Tickets/` folder → `tickets` DB (ticket service):
+`relation "..." does not exist`. Skip these 8 files entirely; the correct
+home for this data is the `Tickets/` folder → `tickets` DB (ticket
+service). Verified by actually inspecting the data (see
+`CSV_AUDIT.md`): the `Super Admin` copies are **empty** (0 rows, zero data
+loss), and the `Organization` copies have a small amount of real but
+non-overlapping data (6 tickets/11 comments/5 issue types/6 attachments)
+that turns out to be dated Nov 2023 QA/smoke-test content
+("Ticket 1 Testing 1", "dsdasd") in an older, incompatible schema — not
+worth migrating.
 
 - `Super Admin/public_tickets_export_*.csv` — skip
 - `Super Admin/public_comments_export_*.csv` — skip
@@ -63,16 +75,12 @@ this data is the `Tickets/` folder → `tickets` DB (ticket service):
 reference to a `user_organization_branch.model.js` that **does not exist**
 in the repo (the file was removed, only the dangling `require()` comment
 is left). There is currently no table for this data anywhere in the
-codebase. Options:
+codebase.
 
-1. Skip this file (default in the prep script) — you lose this historical
-   mapping data until/unless the feature is rebuilt.
-2. Recreate `models/user_organization_branch.model.js` and re-wire it in
-   `config/database.js` before importing, if this data is still needed
-   (check the CSV's columns first to know what to rebuild).
-
-This is a product decision, not an infra one — flagged here rather than
-guessed at.
+**Turns out to be moot**: verified the actual file (see `CSV_AUDIT.md`) —
+it has **0 data rows**, just a header. There's nothing to lose either way;
+skip it (default in the prep script) and don't worry about rebuilding the
+model unless you have another reason to.
 
 ## Using `prepare-csv-dir.sh` + `import-tables.sh` together
 

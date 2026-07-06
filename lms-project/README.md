@@ -106,32 +106,46 @@ instead of relying on `sync()` + seeders.
    `alter: false` like the others) — it will attempt schema alterations on
    every restart.
 
-## Findings from the real `.env` files (super-admin, org, both frontends)
+## Findings from the real `.env` files (all 5 backends + both frontends)
 
-Actual `.env` files shared for these 4 confirmed several things — full
-detail in `fixes/NOTES.md` items 3–3d and 7:
+All 7 `.env` files have now been reviewed — full detail in
+`fixes/NOTES.md` items 3–3d and 7:
 
 - **Real bug**: org frontend's `NEXT_PUBLIC_API` has a literal leading
   space baked into the quoted value — breaks every API URL built from it.
-- **Real bug**: both backends' `.env` have `DB_USER = postg` (should be
-  `postgres`) — Postgres auth will fail as shipped.
-- Both backends' `API_GATEWAY_URL` still pointed at the live
-  `stag-apigateway.bitsrack.com` — confirmed this should be
-  `http://localhost:3000/` for a fully self-contained VPS.
+- **Real bug**: super-admin, org, and ticket `.env` all have
+  `DB_USER = postg` (should be `postgres`) — Postgres auth will fail as
+  shipped. (usermgmt's original staging `.env` has this correct already;
+  no new copy of it has been shared for the VPS setup yet.)
+- Super-admin, org, ticket, and notification `API_GATEWAY_URL` all still
+  point at the live `stag-apigateway.bitsrack.com` — confirmed this should
+  be `http://localhost:3000/` for a fully self-contained VPS.
 - `DB_NAME` uses a `super_admin_old_restore` / `organization_old_restore`
-  convention — reads as a deliberate side-by-side restore-verification
+  convention for super-admin/org (ticket's `.env` keeps the plain
+  `tickets` name) — reads as a deliberate side-by-side restore-verification
   step before cutover; reflected as a comment in the env templates.
 - **Storage provider changed**: `AWS_REGION=europe-1` +
   `AWS_FILE_URL=https://jd758.upcloudobjects.com/` is **UpCloud Object
-  Storage**, not AWS. All 4 Postgres-backed backends construct their S3
-  client with no endpoint override — uploads will fail outright until the
-  upload helper in each is patched to accept a custom endpoint. Exact
-  before/after patch in `fixes/NOTES.md` item 7; env templates now include
-  an `AWS_ENDPOINT` variable for this.
+  Storage**, not AWS — confirmed identical across super-admin, org, and
+  ticket. All 4 Postgres-backed backends construct their S3 client with no
+  endpoint override — uploads will fail outright until the upload helper
+  in each is patched to accept a custom endpoint. Exact before/after patch
+  in `fixes/NOTES.md` item 7; env templates now include an `AWS_ENDPOINT`
+  variable for this.
+- Notification's `.env` is in good shape: `DB_URL` already points at
+  `127.0.0.1:27017/notifications` with credentials matching
+  `setup/02-create-mongo-db.sh`'s expectations. Only the `API_GATEWAY_URL`
+  fix above applies to it.
 
-Ticket and notification `.env` files haven't been shared yet — once they
-are, the same checks (DB user/host, gateway URL, storage config) should be
-run against them too.
+## CSV data audit
+
+Beyond the folder/filename structure covered above, the actual CSV
+contents were audited row-by-row: 27,784 total rows across 81 files, zero
+ragged rows, zero duplicate/blank primary keys, zero encoding issues, and
+zero orphaned foreign keys across every relationship checked. Full
+results (including a refined look at the small amount of real-but-legacy
+data sitting in `Organization`'s ticket-related CSVs) in
+`import/CSV_AUDIT.md`.
 
 ## Old DB CSV export (`Olddev_database.zip`)
 
@@ -179,6 +193,7 @@ lms-project/
     prepare-csv-dir.sh             - normalizes the old DB export's filenames into <table>.csv,
                                       with flags to drop known-orphaned tables
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
+    CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
     NOTES.md                       - exact diffs/lines to change in each repo (seed calls, gateway IPs, frontend API URLs)
 ```
