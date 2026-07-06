@@ -106,6 +106,33 @@ instead of relying on `sync()` + seeders.
    `alter: false` like the others) — it will attempt schema alterations on
    every restart.
 
+## Findings from the real `.env` files (super-admin, org, both frontends)
+
+Actual `.env` files shared for these 4 confirmed several things — full
+detail in `fixes/NOTES.md` items 3–3d and 7:
+
+- **Real bug**: org frontend's `NEXT_PUBLIC_API` has a literal leading
+  space baked into the quoted value — breaks every API URL built from it.
+- **Real bug**: both backends' `.env` have `DB_USER = postg` (should be
+  `postgres`) — Postgres auth will fail as shipped.
+- Both backends' `API_GATEWAY_URL` still pointed at the live
+  `stag-apigateway.bitsrack.com` — confirmed this should be
+  `http://localhost:3000/` for a fully self-contained VPS.
+- `DB_NAME` uses a `super_admin_old_restore` / `organization_old_restore`
+  convention — reads as a deliberate side-by-side restore-verification
+  step before cutover; reflected as a comment in the env templates.
+- **Storage provider changed**: `AWS_REGION=europe-1` +
+  `AWS_FILE_URL=https://jd758.upcloudobjects.com/` is **UpCloud Object
+  Storage**, not AWS. All 4 Postgres-backed backends construct their S3
+  client with no endpoint override — uploads will fail outright until the
+  upload helper in each is patched to accept a custom endpoint. Exact
+  before/after patch in `fixes/NOTES.md` item 7; env templates now include
+  an `AWS_ENDPOINT` variable for this.
+
+Ticket and notification `.env` files haven't been shared yet — once they
+are, the same checks (DB user/host, gateway URL, storage config) should be
+run against them too.
+
 ## Old DB CSV export (`Olddev_database.zip`)
 
 Contains one CSV per table, in 4 folders: `User Management`, `Super Admin`,
