@@ -3,6 +3,86 @@
 These repos aren't in this git remote's scope, so the fixes are documented
 here rather than committed directly to them. Apply manually.
 
+## -1. CRITICAL: `lms-backend-usermgmt-staging` crashes on startup, every time, on any empty/fresh `user_management` DB
+
+This is what's behind:
+
+```
+Error
+    at Query.run (.../node_modules/sequelize/lib/dialects/postgres/query.js:50:25)
+...
+    at async student_parent.sync (.../node_modules/sequelize/lib/model.js:942:7) {
+  name: 'SequelizeDatabaseError',
+  parent: error: relation "users" does not exist
+...
+  sql: 'CREATE TABLE IF NOT EXISTS "student_parent" (... REFERENCES "users" ("id") ...)'
+```
+
+**This is very likely the actual root cause of the original "migration
+script not importing the complete DB" symptom** — it's a bug that fires
+on every single startup against an empty database, before schema creation
+even has a chance to finish.
+
+**Root cause:** `models/studentParent.model.js` has a stray, leftover
+debug line at the bottom of the file:
+
+```js
+module.exports = (sequelize, DataTypes) => {
+  const StudentParent = sequelize.define("student_parent", { ... }, {
+    tableName: "student_parent",
+    timestamps: false,
+  });
+  StudentParent.sync({ alter: true })   // <-- this line shouldn't be here
+  return StudentParent;
+};
+```
+
+`config/database.js` requires all 19 model files top-to-bottom
+(`db.users` first, `db.student_parent` fourth), then calls one shared
+`db.sequelize.sync({ alter: false })` at the very end, once every model
+and association is registered — that shared call is what's supposed to
+create all tables in dependency order.
+
+But `studentParent.model.js` doesn't wait for that. The instant this file
+is `require()`'d (line 28 of `config/database.js`), it independently calls
+`StudentParent.sync({ alter: true })` on the spot — trying to
+`CREATE TABLE student_parent (... REFERENCES "users" ...)` immediately,
+before the `users` table exists (it's only *registered* in memory at this
+point via `db.users = require(...)`, not yet created in Postgres — that
+only happens later, in the shared `sync()` call at the bottom of the
+file). This standalone sync call has no `.catch()` and isn't awaited, so
+its rejection (`relation "users" does not exist`) becomes an **unhandled
+promise rejection** — which, under Node 18's default
+`--unhandled-rejections=throw` behavior (the Dockerfile uses
+`node:18.13.0-bullseye-slim`), **crashes the whole process**, racing
+against (and likely winning against) the real `db.sequelize.sync()` call
+a few lines later that would have created every table correctly. That's
+consistent with a database that ends up with some tables created and
+others missing depending on how far the real sync got before the crash —
+exactly "not importing the complete DB."
+
+This will happen on **every startup** against any database where `users`
+doesn't already exist yet — i.e. guaranteed on first boot of a fresh
+`user_management` database, every time, until fixed.
+
+**Fix:** delete that one line. The shared `sequelize.sync()` in
+`config/database.js` already handles creating `student_parent` (and every
+other table) in the correct order via the associations declared later in
+that same file — this standalone call serves no purpose and only exists
+to break things:
+
+```diff
+-  StudentParent.sync({ alter: true })
+   return StudentParent;
+```
+
+(i.e. just remove the `StudentParent.sync({ alter: true })` line
+entirely, nothing needs to replace it.)
+
+This is a one-line fix but it's the highest-priority one in this whole
+document — until it's removed, `user_management` cannot reliably finish
+creating its schema on a fresh database.
+
 ## 0. CRITICAL: `lms-backend-super-admin-staging` crashes the whole process on startup when `countries` is empty
 
 This is what's behind:

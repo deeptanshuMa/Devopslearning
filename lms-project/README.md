@@ -35,14 +35,27 @@ Mongoose, entirely separate from the Postgres side. On the new server
 you'll run your own local (or managed) Postgres + MongoDB instances and
 point every service's `.env` at them.
 
-## ⚠ Known crash: super-admin dies on startup when `countries` is empty
+## ⚠ Known startup crashes — check these first if a service won't stay up
 
-`lms-backend-super-admin-staging` will crash the whole process a few
-seconds after boot if its `countries` table has zero rows (true for a
-fresh DB, or a partially-completed restore). Root cause is two stacked
-bugs in `organization.controller.js`'s `importData` — full diagnosis,
-operational workaround, and code patch in `fixes/NOTES.md` item 0. Check
-that first if the service won't stay up.
+Two real code bugs (not config issues) will crash these services on a
+fresh/empty database:
+
+- **`lms-backend-usermgmt-staging`** — crashes on **every** startup
+  against an empty `user_management` DB. A stray, leftover
+  `StudentParent.sync({ alter: true })` debug line in
+  `models/studentParent.model.js` tries to create that table (which
+  references `users`) immediately when the model file loads, before the
+  real `users` table exists — throwing `relation "users" does not exist`
+  as an unhandled promise rejection that kills the process, racing
+  against (and likely beating) the proper `sequelize.sync()` a few lines
+  later. **This is very likely the actual root cause of the original
+  "migration script not importing the complete DB" report** — full
+  diagnosis and one-line fix in `fixes/NOTES.md` item -1.
+- **`lms-backend-super-admin-staging`** — crashes a few seconds after
+  boot specifically when its `countries` table has zero rows (fresh DB,
+  or partial restore). Two stacked bugs in `organization.controller.js`'s
+  `importData`. Full diagnosis, operational workaround, and code patch in
+  `fixes/NOTES.md` item 0.
 
 ## Key problem found: "migration script not importing the complete DB"
 
