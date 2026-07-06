@@ -9,7 +9,8 @@
 //
 // Each service reads its own DB/JWT/etc config from the `app/.env` file in
 // its `cwd` (via dotenv) — see setup/env-templates/ for what belongs there.
-// Add tickets/notification entries here once those repos are available.
+// lms-notification connects to MongoDB, not Postgres — see
+// setup/02-create-mongo-db.sh.
 
 module.exports = {
   apps: [
@@ -38,8 +39,27 @@ module.exports = {
       env: { NODE_ENV: "production" },
     },
     {
-      name: "lms-frontend",
-      cwd: "/opt/lms/frontend/app",
+      name: "lms-ticket",
+      cwd: "/opt/lms/ticket/app",
+      script: "bin/www",
+      env: { NODE_ENV: "production" },
+    },
+    {
+      name: "lms-notification",
+      cwd: "/opt/lms/notification/app",
+      script: "bin/www",
+      env: { NODE_ENV: "production" },
+    },
+    {
+      name: "lms-superadmin-frontend",
+      cwd: "/opt/lms/superadmin-frontend/app",
+      script: "node_modules/.bin/next",
+      args: "start",
+      env: { NODE_ENV: "production" },
+    },
+    {
+      name: "lms-org-frontend",
+      cwd: "/opt/lms/org-frontend/app",
       script: "node_modules/.bin/next",
       args: "start",
       env: { NODE_ENV: "production" },

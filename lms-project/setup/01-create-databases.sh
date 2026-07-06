@@ -5,9 +5,9 @@ set -euo pipefail
 
 DB_PASSWORD="${1:?Usage: 01-create-databases.sh <postgres_password>}"
 
-DATABASES=("user_management" "super_admin" "organization")
-# If you later add the tickets / notification services, append their DB
-# names here, e.g. DATABASES+=("tickets" "notification")
+DATABASES=("user_management" "super_admin" "organization" "tickets")
+# The notification service uses MongoDB, not Postgres — see
+# 02-create-mongo-db.sh for that one instead.
 
 echo "==> Setting password for role 'postgres'"
 psql -v ON_ERROR_STOP=1 --username postgres <<-EOSQL

@@ -52,18 +52,38 @@ that already includes these tables.)
 Replace the `serviceEndpoints` block with `../setup/gateway.config.local.yml`'s
 version (or point at wherever each service actually runs, if not localhost).
 
-## 3. Frontend `.env` — `NEXT_PUBLIC_API`
+## 3. Both frontends' `.env` — `NEXT_PUBLIC_API`
 
-Currently `https://stag-apigateway.bitsrack.com/`. Change to your VPS
-gateway's URL (e.g. `http://localhost:3000/` if the frontend runs on the
-same box, or `https://your-domain/` if behind a reverse proxy).
+`lms-react-super-admin-frontend-staging` and `lms-org-frontend-staging`
+both currently point at `https://stag-apigateway.bitsrack.com/`. Change
+both to your VPS gateway's URL (e.g. `http://localhost:3000/` if the
+frontend runs on the same box, or `https://your-domain/` if behind a
+reverse proxy).
 
 ## 4. Stray root-level `test.js` files
 
-`lms-backend-usermgmt-staging/test.js` and `lms-backend-org-staging/test.js`
-(repo root, not `app/test/`) look like leftover scratch/debug scripts —
-`usermgmt`'s is a duplicate, partially-edited copy of
-`app/scripts/defaultModules.js`. They aren't required by anything
-(`app.js`, `bin/www`, `package.json` scripts don't reference them). Safe to
-delete, but left alone here since that's a repo-hygiene call for you to
-make, not a functional fix.
+`lms-backend-usermgmt-staging/test.js`, `lms-backend-org-staging/test.js`,
+and `lms-backend-notifications-staging/test.js` (repo root, not
+`app/test/`) look like leftover scratch/debug scripts — `usermgmt`'s is a
+duplicate, partially-edited copy of `app/scripts/defaultModules.js`. They
+aren't required by anything (`app.js`, `bin/www`, `package.json` scripts
+don't reference them). Safe to delete, but left alone here since that's a
+repo-hygiene call for you to make, not a functional fix.
+
+## 5. Old CSV export — orphaned tables
+
+See `import/OLD_DB_ANALYSIS.md` for the full breakdown. Short version:
+- Skip the `tickets`/`comments`/`attachments`/`issue_types` CSVs found
+  inside the `Super Admin` and `Organization` export folders — that data
+  lives correctly in the `Tickets` folder now (own service, own DB).
+- `user_organization_branch_mappings` (from `User Management`) has no
+  model anywhere in the current `usermgmt` repo — decide whether to
+  rebuild that model or drop the data.
+
+## 6. `lms-backend-ticket-staging` — duplicate/unused model files
+
+`models/ticket_attachment.model.js`, `models/ticket_comments.model.js`,
+`models/issue_types.model.js`, and `models/user_tickets.model.js` are not
+required by `config/database.js` (which uses `attachments.model.js`,
+`comments.model.js`, and `issueType.model.js` instead) — dead code, safe
+to remove if you want to tidy the repo, but harmless if left in place.
