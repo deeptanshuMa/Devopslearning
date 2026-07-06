@@ -20,10 +20,16 @@
 #   DB_PASSWORD=secret ./import-tables.sh user_management ./dumps/user_management
 #
 # Each file in <csv_dir> must be named "<table_name>.csv" and have a header
-# row whose column names match the Postgres table's columns exactly. Run
-# `psql -d <db_name> -c '\dt'` after the schema-creation step to confirm
-# real table names (a few models set an explicit `tableName`, e.g. `address`,
-# `student_parent` — these don't match the model's variable name).
+# row whose column names match the Postgres table's columns exactly (case
+# included — Sequelize columns like createdAt/updatedAt are case-sensitive
+# quoted identifiers). Columns are matched BY NAME (using the CSV's own
+# header row as the `\copy` column list), not by position — this matters
+# because Sequelize's sync() creates columns in model-attribute-definition
+# order, which doesn't always match the original export's column order.
+# Run `psql -d <db_name> -c '\dt'` after the schema-creation step to
+# confirm real table names (a few models set an explicit `tableName`, e.g.
+# `address`, `student_parent` — these don't match the model's variable
+# name).
 #
 # Set TRUNCATE_FIRST=true to empty each target table before loading, useful
 # if an earlier partial/failed import already put some rows in.
@@ -61,11 +67,32 @@ trap 'rm -f "$SQL_FILE"' EXIT
   for f in "${csv_files[@]}"; do
     table="$(basename "$f" .csv)"
     abspath="$(realpath "$f")"
+
+    # Build an explicit, quoted column list from the CSV's own header row
+    # instead of relying on `\copy table FROM file` matching columns
+    # positionally against the table's physical column order. Sequelize's
+    # sync() creates columns in model-attribute-definition order, which
+    # does not always match the original export's column order (e.g. a
+    # column added/reordered in the model since the export was taken) —
+    # a plain positional copy silently shifts every column after the
+    # first mismatch and can land a timestamp in a boolean column with a
+    # cryptic "invalid input syntax" error. Naming columns explicitly
+    # makes the copy order-independent.
+    header_line="$(head -n 1 "$f")"
+    IFS=',' read -ra header_cols <<< "$header_line"
+    colspec=""
+    for c in "${header_cols[@]}"; do
+      c="${c%$'\r'}"           # strip trailing CR (CRLF line endings)
+      c="${c#\"}"; c="${c%\"}" # strip surrounding quotes if present
+      if [ -n "$colspec" ]; then colspec+=","; fi
+      colspec+="\"${c}\""
+    done
+
     if [ "$TRUNCATE_FIRST" = "true" ]; then
       echo "TRUNCATE TABLE \"${table}\";"
     fi
     echo "\\echo Importing ${table}..."
-    echo "\\copy \"${table}\" FROM '${abspath}' WITH (FORMAT csv, HEADER true)"
+    echo "\\copy \"${table}\"(${colspec}) FROM '${abspath}' WITH (FORMAT csv, HEADER true)"
   done
   echo "SET session_replication_role = DEFAULT;"
 } > "$SQL_FILE"

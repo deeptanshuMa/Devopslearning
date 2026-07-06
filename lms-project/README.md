@@ -57,6 +57,33 @@ fresh/empty database:
   `importData`. Full diagnosis, operational workaround, and code patch in
   `fixes/NOTES.md` item 0.
 
+## ⚠ Fixed: `import-tables.sh` was silently shifting columns
+
+Caught this importing `Super Admin/countries` into `super_admin_old_restore`
+— `\copy "table" FROM file` with no explicit column list maps CSV columns
+to the table **by position**, not by name. Sequelize's `sync()` creates
+columns in model-attribute-definition order, which isn't always the same
+order the original export was taken in (e.g. `countries.model.js` defines
+`iso3, iso2, nationality, is_active`, but the CSV has
+`iso3, nationality, is_active, createdAt, updatedAt, iso2` — `iso2` moved).
+One column out of place shifts everything after it; here it eventually
+landed a timestamp into the boolean `is_active` column
+(`invalid input syntax for type boolean`). Fixed `import-tables.sh` to
+build an explicit, quoted column list from each CSV's own header row, so
+`\copy` maps by name instead — verified against a live Postgres instance
+with this exact table/CSV, confirming all 250 rows now land in the correct
+columns (`is_active` boolean, `iso2`/`nationality` swapped back correctly).
+**Re-`git pull`/re-copy `import-tables.sh` before importing anything else.**
+Checked the 3 tables already loaded with the old script version
+(`acknowledgement_attachments`, `acknowledgement_categories`,
+`acknowledgements`) against their models — their CSV column order happens
+to match the model's field order exactly, so they're **not** affected and
+don't need re-importing. `countries` is the one to redo (with
+`TRUNCATE_FIRST=true` since it partially loaded before the error, or just
+`DROP`/recreate the table). If you hit column-order issues on other tables
+going forward, that's this same class of bug — the fix now handles it
+automatically.
+
 ## Key problem found: "migration script not importing the complete DB"
 
 There is **no real migration system** in any of these repos — no
