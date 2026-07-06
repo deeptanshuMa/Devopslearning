@@ -107,6 +107,39 @@ their correct row counts (4/25/18) both times, no data loss.
 **Re-`git pull`/re-copy `import-tables.sh` again** if you copied it before
 this fix.
 
+## ⚠ Fixed: `import-tables.sh` errored on genuine schema drift (extra/missing CSV columns)
+
+Hit importing `Organization/assignments`: the CSV has 23 columns
+including `attachment_type` and `attachment`, but the current
+`assignments` model has neither (it has since gained
+`session_year_id` instead, presumably after single-file attachments were
+replaced by the separate `assignment_attachments` table) — a plain
+`\copy` with a column list errors outright with `column "attachment_type"
+of relation "assignments" does not exist`. This isn't a one-off: schema
+drift between a ~1.5-year-old export and the current models is a real,
+recurring possibility across the remaining tables, not just this one.
+
+Rewrote `import-tables.sh`'s import step to be robust to this generally,
+not just patch this one table: each CSV now loads first into a `TEMP`
+staging table shaped to match the file exactly (every column as `TEXT`,
+in the file's own order — so the load step itself can never fail on
+order or type), then an `INSERT INTO "<table>" (...) SELECT ...::<type>
+FROM staging` copies over only the columns that exist in **both** the CSV
+and the current table, casting each back to its real column type. Any
+CSV column absent from the table is dropped with a printed warning; any
+table column absent from the CSV is just left `NULL`/default. This
+subsumes the two earlier fixes (column reorder, FK-safe batch truncate)
+under one mechanism rather than three separate patches.
+
+Verified against three live scenarios in a real Postgres 16 instance:
+`Organization/assignments` (2 dropped columns, warning printed, all 3 rows
+land correctly with `session_year_id` NULL as expected), `Super
+Admin/countries` (the earlier column-reorder case, still resolves
+correctly), and the `acknowledgement_*` FK chain with `TRUNCATE_FIRST=true`
+run twice consecutively (still correct row counts, no data loss). **Re-pull
+`import-tables.sh` once more** before continuing with `Organization` or
+any remaining folder.
+
 ## Key problem found: "migration script not importing the complete DB"
 
 There is **no real migration system** in any of these repos — no
