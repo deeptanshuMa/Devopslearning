@@ -33,7 +33,7 @@
 #      a warning); any table column with no matching CSV column is just
 #      left NULL/default.
 #
-# This handles two real issues seen in practice:
+# This handles three real issues seen in practice:
 #   - Column REORDER: Sequelize's sync() creates columns in
 #     model-attribute-definition order, which isn't always the same order
 #     the original export was taken in (e.g. a column moved position in
@@ -45,6 +45,14 @@
 #     model has since added (e.g. `assignments.session_year_id`) — a plain
 #     `\copy` errors outright ("column ... does not exist") instead of
 #     importing what it safely can.
+#   - Bad legacy rows: some exported rows are NULL/blank in a column the
+#     current model requires (`allowNull: false`) — e.g. `authors` has
+#     rows with no `name` at all (unreferenced test junk), or
+#     `course_ratings` has real ratings with no `comment` (a stricter
+#     constraint than the data ever actually satisfied). Rather than
+#     failing the whole table's import over these, rows that are NULL in
+#     a required column are skipped individually (with a warning), so the
+#     rest of the table still loads.
 #
 # Run `psql -d <db_name> -c '\dt'` after the schema-creation step to
 # confirm real table names (a few models set an explicit `tableName`, e.g.
@@ -134,14 +142,18 @@ trap 'rm -f "$SQL_FILE"' EXIT
     # immediate connection — not deferred into the batch SQL file — since
     # we need this to decide what to generate for this table).
     mapfile -t dest_rows < <("${PSQL[@]}" -tAc \
-      "SELECT column_name || '|' || data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='${table}' ORDER BY ordinal_position")
+      "SELECT column_name || '|' || data_type || '|' || is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='${table}' ORDER BY ordinal_position")
     if [ ${#dest_rows[@]} -eq 0 ]; then
       echo "ERROR: table \"${table}\" does not exist in ${DB_NAME} — did sequelize.sync() run against this database?" >&2
       exit 1
     fi
     declare -A dest_type=()
+    declare -A dest_nullable=()
     for row in "${dest_rows[@]}"; do
-      dest_type["${row%%|*}"]="${row#*|}"
+      col="${row%%|*}"
+      rest="${row#*|}"
+      dest_type["$col"]="${rest%%|*}"
+      dest_nullable["$col"]="${rest#*|}"
     done
 
     keep_cols=()
@@ -156,6 +168,26 @@ trap 'rm -f "$SQL_FILE"' EXIT
     if [ ${#dropped_cols[@]} -gt 0 ]; then
       echo "WARNING: ${table}: CSV has column(s) not present in the current table, dropping: ${dropped_cols[*]}" >&2
     fi
+
+    # Columns the destination requires (NOT NULL) — rows that are NULL
+    # here in the source can't be inserted as-is. Rather than aborting the
+    # whole table over a handful of bad legacy rows, skip just those rows
+    # (via a WHERE clause below) and warn about how many/which column.
+    notnull_cols=()
+    for c in "${keep_cols[@]}"; do
+      if [ "${dest_nullable[$c]}" = "NO" ]; then
+        notnull_cols+=("$c")
+      fi
+    done
+    for c in "${notnull_cols[@]}"; do
+      col_idx="$(awk -F',' -v col="$c" 'NR==1{for(i=1;i<=NF;i++) if($i==col){print i; exit}}' "$f")"
+      if [ -n "$col_idx" ]; then
+        blanks="$(awk -F',' -v idx="$col_idx" 'NR>1 && $idx=="" {n++} END{print n+0}' "$f")"
+        if [ "$blanks" -gt 0 ]; then
+          echo "WARNING: ${table}: ~${blanks} row(s) have a blank '${c}' (required, NOT NULL) — these rows will be skipped" >&2
+        fi
+      fi
+    done
 
     # Staging table: TEXT columns in the file's exact order, so `\copy`
     # needs no column list and can't misalign regardless of the real
@@ -177,12 +209,22 @@ trap 'rm -f "$SQL_FILE"' EXIT
       insert_cols+="\"${c}\""
       select_exprs+="\"${c}\"::${dest_type[$c]}"
     done
-    unset dest_type
+    unset dest_type dest_nullable
+
+    where_clause=""
+    for c in "${notnull_cols[@]}"; do
+      if [ -n "$where_clause" ]; then where_clause+=" AND "; fi
+      where_clause+="\"${c}\" IS NOT NULL"
+    done
 
     echo "\\echo Importing ${table}..."
     echo "CREATE TEMP TABLE \"${stage}\" (${stage_cols_def});"
     echo "\\copy \"${stage}\" FROM '${abspath}' WITH (FORMAT csv, HEADER true)"
-    echo "INSERT INTO \"${table}\" (${insert_cols}) SELECT ${select_exprs} FROM \"${stage}\";"
+    if [ -n "$where_clause" ]; then
+      echo "INSERT INTO \"${table}\" (${insert_cols}) SELECT ${select_exprs} FROM \"${stage}\" WHERE ${where_clause};"
+    else
+      echo "INSERT INTO \"${table}\" (${insert_cols}) SELECT ${select_exprs} FROM \"${stage}\";"
+    fi
     echo "DROP TABLE \"${stage}\";"
   done
   echo "SET session_replication_role = DEFAULT;"

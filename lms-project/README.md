@@ -140,6 +140,38 @@ run twice consecutively (still correct row counts, no data loss). **Re-pull
 `import-tables.sh` once more** before continuing with `Organization` or
 any remaining folder.
 
+## ⚠ Fixed: `import-tables.sh` failed whole tables over individual bad legacy rows
+
+Next thing hit in `Organization`: `authors` has 15 of 40 rows with a
+completely blank `name` (the model requires `allowNull: false`) — all 15
+confirmed unreferenced by any `books` row, i.e. orphaned test junk, not
+real authors. Separately, `course_ratings` has 2 of 9 rows with a real
+star rating (5, 4) but a blank `comment`, even though `comment` is also
+`allowNull: false` in the model — a real, legitimate user action (rating
+without writing a review) that the model's constraint is arguably too
+strict to allow. Either way, a plain `INSERT` fails the **entire table's**
+import the moment it reaches one such row, rather than loading the rows
+that are actually fine.
+
+Extended `import-tables.sh` to check, per table, which of the columns
+being imported are `NOT NULL` in the destination (via
+`information_schema.columns.is_nullable`), print a warning naming the
+column and an approximate count of affected rows, and add a
+`WHERE col1 IS NOT NULL AND col2 IS NOT NULL ...` clause to the `INSERT`
+so only rows that are actually NULL in a required column get skipped —
+every other row in the table still loads. This is a blunt, generic safety
+net (it can't tell "junk row" from "constraint that's stricter than it
+should be" apart) — it just refuses to let one bad row block 38 good
+ones. If you want the `course_ratings` rows without comments back later,
+that's a call between relaxing `comment`'s `allowNull` in the model or
+manually giving those 2 rows a placeholder comment — noted here, not
+decided for you.
+
+Verified against both live in Postgres 16: `authors` imports 25/40 (15
+skipped, warned), `course_ratings` imports 7/9 (2 skipped, warned), and in
+both cases every row that *did* land has no NULL in the column that was
+being enforced.
+
 ## Key problem found: "migration script not importing the complete DB"
 
 There is **no real migration system** in any of these repos — no
