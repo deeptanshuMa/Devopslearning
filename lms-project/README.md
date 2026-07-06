@@ -143,9 +143,10 @@ any remaining folder.
 ## ⚠ Fixed: `import-tables.sh` failed whole tables over individual bad legacy rows
 
 Next thing hit in `Organization`: `authors` has 15 of 40 rows with a
-completely blank `name` (the model requires `allowNull: false`) — all 15
-confirmed unreferenced by any `books` row, i.e. orphaned test junk, not
-real authors. Separately, `course_ratings` has 2 of 9 rows with a real
+completely blank `name` (the model requires `allowNull: false`).
+**Correction, see the entry below** — these turned out not to all be
+orphaned junk; 10 of the 15 are referenced by real `books` rows.
+Separately, `course_ratings` has 2 of 9 rows with a real
 star rating (5, 4) but a blank `comment`, even though `comment` is also
 `allowNull: false` in the model — a real, legitimate user action (rating
 without writing a review) that the model's constraint is arguably too
@@ -171,6 +172,39 @@ Verified against both live in Postgres 16: `authors` imports 25/40 (15
 skipped, warned), `course_ratings` imports 7/9 (2 skipped, warned), and in
 both cases every row that *did* land has no NULL in the column that was
 being enforced.
+
+## ⚠ Correction: the `authors` skip broke `books` — 10 of the 15 weren't orphans
+
+Got this wrong above: I checked whether **one** of the 15 blank-name
+author IDs was referenced by any `books` row, found it wasn't, and
+generalized that to all 15 without checking the other 14. After
+restarting `org-backend`, its sync failed again — this time on
+`books_author_id_fkey`: `Key (author_id)=(eece42b7-...) is not present in
+table "authors"`. Checked properly this time: **10 of the 15** skipped
+author IDs are referenced by real `books.author_id` values, and
+`author_id` is `NOT NULL` on `books`, so unlike `city_id` it can't just be
+cleared — the book needs *an* author row to point at.
+
+Confirmed `course_ratings` doesn't have this problem: nothing in
+`org/config/database.js` associates any other table to it (no
+`hasMany`/`belongsTo` targeting `course_ratings`), so that skip is safe as
+documented above. `authors` was the one exception, precisely because it's
+a real parent table (`author.hasMany(book, { foreignKey: "author_id" })`)
+in a way `course_ratings` isn't.
+
+**Fix**: `import/fix-orphaned-authors.sql` reinstates all 15 skipped
+`authors` rows with `name = 'Unknown Author'` (satisfies the `NOT NULL`
+constraint, preserves their original IDs so `books.author_id` resolves).
+Run it against `organization_old_restore` (or `organization`), then
+restart `org-backend` again.
+
+**Lesson for future tables**: `import-tables.sh`'s NOT-NULL-skip safety
+net (previous section) is blunt by design — it doesn't know whether a
+skipped row is referenced elsewhere. Before trusting a "rows skipped"
+warning for any table, check the model's `config/database.js` for
+`hasMany`/`belongsTo` associations pointing at that table — if something
+else references it, dropped rows can resurface as a dangling FK
+elsewhere, exactly like this.
 
 ## Key problem found: "migration script not importing the complete DB"
 
