@@ -292,6 +292,72 @@ many `time_zones` rows resolve against the current `countries` table —
 address fix: a historical country name with no exact match in the current
 table won't resolve.
 
+## ⚠ Architectural issue: super-admin's regional IDs don't match what the frontend submits
+
+Hit trying to create a new organization: `insert or update on table
+"organizations" violates foreign key constraint
+"organizations_city_id_fkey"`. This isn't a historical-data repair like
+the previous fixes — it's a **structural mismatch** that will block
+*every* new organization creation until fixed.
+
+The org-create form's Country/State/City/TimeZone dropdowns all come from
+usermgmt's `/v1/regional/*` routes (confirmed earlier for the TimeZone
+one) — but the `organizations` table these values get submitted to lives
+in `super-admin`, which has its **own separate** `countries`/`states`/
+`cities` tables with different IDs (each service seeds/imports regional
+data independently). Checked directly: the submitted `country_id` and
+`state_id` didn't exist in super-admin's tables at all (`0` each);
+`timezone_id` happened to resolve only because both services' `time_zones`
+are untouched historical data from the same original system. `cities` in
+super-admin was always empty (never in any CSV export), so city selection
+was guaranteed to fail outright.
+
+**Fix**: no new script needed — reused `import/import-tables.sh` as-is,
+just **without** `TRUNCATE_FIRST`, to additively copy usermgmt's current
+`countries`/`states`/`cities` into super-admin's tables *alongside* the
+existing historical rows (not replacing them). This means:
+- Existing historical `organizations.country_id`/`state_id` references
+  keep resolving against the old rows, untouched — no remapping needed,
+  unlike the address/timezone fixes.
+- New org-creation submissions (using usermgmt-sourced IDs) now also
+  resolve, since those exact IDs are now present too.
+- `import-tables.sh`'s existing FK-bypass (`session_replication_role =
+  replica`) means file processing order doesn't matter even though
+  `cities` alphabetically sorts before `countries`/`states` that it
+  depends on.
+
+Verified end-to-end in Postgres 16 with a synthetic case matching this
+exact scenario (destination db with its own old country/state + an
+existing organization referencing them, source db with fresh IDs
+including a city): after the additive import, the old historical
+organization still resolved correctly against its original rows, **and**
+a brand-new organization insert using the source db's IDs (country,
+state, and city) succeeded.
+
+Commands used:
+```bash
+mkdir -p /tmp/sync_usermgmt_regional
+PGPASSWORD=... psql -h localhost -U postgres -d user_management_old_restore -c "\copy countries TO '/tmp/sync_usermgmt_regional/countries.csv' WITH (FORMAT csv, HEADER true)"
+PGPASSWORD=... psql -h localhost -U postgres -d user_management_old_restore -c "\copy states TO '/tmp/sync_usermgmt_regional/states.csv' WITH (FORMAT csv, HEADER true)"
+PGPASSWORD=... psql -h localhost -U postgres -d user_management_old_restore -c "\copy cities TO '/tmp/sync_usermgmt_regional/cities.csv' WITH (FORMAT csv, HEADER true)"
+
+# NOTE: no TRUNCATE_FIRST — this must be additive
+DB_PASSWORD=... bash import/import-tables.sh super_admin_old_restore /tmp/sync_usermgmt_regional
+```
+
+**This is a design-level issue, not just a migration artifact** — as long
+as different services keep independent regional tables while a shared
+frontend sources dropdowns from just one of them, this will keep
+happening for any new record that stores a country/state/city/timezone
+reference. `org`'s `organization_branches.city_id` (already nulled once
+for historical data, see the city_id fix above) will hit the exact same
+problem the next time someone creates a branch through the live app —
+worth running the same additive sync against `organization_old_restore`
+before that becomes the next support thread, and worth reconsidering the
+regional-data architecture for the real production system (e.g. a single
+shared regional-data service, or consistently seeding all services from
+the same fixed-ID source) rather than patching this repeatedly per table.
+
 ## Key problem found: "migration script not importing the complete DB"
 
 There is **no real migration system** in any of these repos — no
