@@ -1,27 +1,29 @@
 #!/usr/bin/env bash
-# Repairs time_zones.country_id in user_management after usermgmt's own
-# regional-data reseed replaced countries with fresh IDs. This is the
-# actual table the org-create "TimeZone" dropdown queries
+# Repairs time_zones.country_id in user_management. This is the actual
+# table the org-create "TimeZone" dropdown queries
 # (GET /v1/regional/timezones/:country_id) — fix-address-regional-links.sh
 # fixed address.country_id/state_id, a different table, which is why that
 # fix didn't resolve this dropdown.
 #
-# time_zones itself was never touched by the reseed (still 427 rows, same
-# as the original export) — only its country_id values are stale, still
-# pointing at the old, now-deleted country rows. Since the reseeded
-# countries table presumably has the same names just new IDs, this
-# resolves each time_zones row's old country_id to a name (via the
-# original countries.csv) and updates it to the current matching country's
-# id — same technique as fix-address-regional-links.sh, just applied to
-# time_zones' own country_id column directly instead of a historical
-# per-row reference.
+# CORRECTED (v2): the live time_zones.country_id turned out to be
+# genuinely NULL already, not just pointing at stale old IDs — the same
+# nulling that hit address.country_id/state_id also hit this column
+# (time_zones' own id and row count are intact, only country_id was
+# wiped). That means there's nothing left in the live table to "resolve
+# by old ID" — the old ID itself is gone. So this version goes back to
+# the ORIGINAL time_zones.csv export to recover each row's old country_id
+# (matching by time_zones' own id, which is unchanged), resolves that old
+# country_id to a name via the original countries.csv, then finds the
+# matching current country by name and updates the live row — same
+# technique as fix-address-regional-links.sh, just keyed off time_zones.id
+# instead of a separate historical foreign key.
 #
 # Usage:
 #   DB_PASSWORD=secret ./fix-timezones-country-links.sh <db_name> <user_management_csv_dir> [db_host] [db_port] [db_user]
 #
-# <user_management_csv_dir> must contain the ORIGINAL countries.csv (the
-# same normalized folder from prepare-csv-dir.sh used for the original
-# import) — address.csv/states.csv aren't needed for this one.
+# <user_management_csv_dir> must contain the ORIGINAL countries.csv AND
+# time_zones.csv (the same normalized folder from prepare-csv-dir.sh used
+# for the original import).
 set -euo pipefail
 
 usage() {
@@ -40,16 +42,17 @@ DB_USER="${5:-postgres}"
 export PGPASSWORD="$DB_PASSWORD"
 PSQL=(psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME")
 
-if [ ! -f "$CSV_DIR/countries.csv" ]; then
-  echo "ERROR: $CSV_DIR/countries.csv not found — point this at the normalized User Management export directory" >&2
-  exit 1
-fi
+for f in countries time_zones; do
+  if [ ! -f "$CSV_DIR/$f.csv" ]; then
+    echo "ERROR: $CSV_DIR/$f.csv not found — point this at the normalized User Management export directory" >&2
+    exit 1
+  fi
+done
 
-SQL_FILE="$(mktemp)"
-trap 'rm -f "$SQL_FILE"' EXIT
-
-{
-  header_line="$(head -n 1 "$CSV_DIR/countries.csv")"
+stage_from_csv() {
+  local file="$1" stage="$2"
+  local header_line header_cols colspec c abspath
+  header_line="$(head -n 1 "$file")"
   IFS=',' read -ra header_cols <<< "$header_line"
   colspec=""
   for c in "${header_cols[@]}"; do
@@ -57,9 +60,17 @@ trap 'rm -f "$SQL_FILE"' EXIT
     if [ -n "$colspec" ]; then colspec+=","; fi
     colspec+="\"${c}\" TEXT"
   done
-  abspath="$(realpath "$CSV_DIR/countries.csv")"
-  echo "CREATE TEMP TABLE \"__old_countries\" (${colspec});"
-  echo "\\copy \"__old_countries\" FROM '${abspath}' WITH (FORMAT csv, HEADER true)"
+  abspath="$(realpath "$file")"
+  echo "CREATE TEMP TABLE \"${stage}\" (${colspec});"
+  echo "\\copy \"${stage}\" FROM '${abspath}' WITH (FORMAT csv, HEADER true)"
+}
+
+SQL_FILE="$(mktemp)"
+trap 'rm -f "$SQL_FILE"' EXIT
+
+{
+  stage_from_csv "$CSV_DIR/countries.csv" "__old_countries"
+  stage_from_csv "$CSV_DIR/time_zones.csv" "__old_time_zones"
 
   cat <<'SQL'
 \echo 'time_zones rows before fix, by whether their country_id currently resolves:'
@@ -69,12 +80,18 @@ SELECT
 FROM time_zones tz
 LEFT JOIN countries nc ON nc.id = tz.country_id;
 
+-- Recover each row's ORIGINAL country_id from the export (matching by
+-- time_zones' own id, which was never touched), resolve that old
+-- country_id to a name via the original countries.csv, then find the
+-- current country with that name.
 UPDATE time_zones tz
 SET country_id = nc.id
-FROM "__old_countries" oc
+FROM "__old_time_zones" otz
+JOIN "__old_countries" oc ON oc.id = otz.country_id
 JOIN countries nc ON nc.name = oc.name
-WHERE tz.country_id = oc.id::uuid
-  AND NOT EXISTS (SELECT 1 FROM countries c2 WHERE c2.id = tz.country_id);
+WHERE tz.id::text = otz.id
+  AND otz.country_id IS NOT NULL AND otz.country_id <> ''
+  AND tz.country_id IS NULL;
 
 \echo 'time_zones rows after fix:'
 SELECT
@@ -84,6 +101,7 @@ FROM time_zones tz
 LEFT JOIN countries nc ON nc.id = tz.country_id;
 
 DROP TABLE "__old_countries";
+DROP TABLE "__old_time_zones";
 SQL
 } > "$SQL_FILE"
 

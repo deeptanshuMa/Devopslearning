@@ -258,31 +258,39 @@ final migration, not just patching around it in this test copy.
 The address fix above didn't resolve the org-create "TimeZone: Nothing
 found" dropdown — because that dropdown queries a completely different
 table. It calls `GET /v1/regional/timezones/:country_id` (a usermgmt
-route), which reads `time_zones` directly — not `address`. `time_zones`
-(427 rows) was never touched by usermgmt's reseed, so every single row
-still points at the old, now-deleted country IDs — this affects **every**
-country, not just the one first tried (confirmed: India and United States
-both returned empty).
+route), which reads `time_zones` directly — not `address`.
 
-**Fix**: `import/fix-timezones-country-links.sh` — same old-name →
-new-id remapping technique as the address fix, but applied directly to
-`time_zones.country_id` (a lookup table's own linkage, not a historical
-per-row reference, so it's a simpler, one-column repair — just needs
-`countries.csv`, not `address.csv`/`states.csv`). Verified in Postgres 16
-with a synthetic India/US case (matching the real bug pattern exactly):
-before the fix, 0 of 3 timezone rows resolved against the current
-`countries` table; after, all 3 resolved to the correct country by name
-(`Asia/Kolkata` → India, `America/New_York`/`America/Chicago` → United
-States).
+**First version of this fix was wrong** — it assumed `time_zones` was
+untouched by usermgmt's reseed and still pointed at old country IDs, so
+it tried to resolve by matching the *live* `country_id` against the old
+export. That found 0 matches, because the real state turned out to be
+simpler and worse: `time_zones.country_id` is genuinely **`NULL`** in the
+live table (same nulling that hit `address.country_id`/`state_id` earlier
+also hit this column — `time_zones`' own `id`s and row count are
+untouched, just this one FK column was wiped).
+
+**Corrected fix**: since the old value is gone from the live row, the
+script now goes back to the *original* `time_zones.csv` export and
+matches by `time_zones.id` (unchanged) to recover each row's old
+`country_id`, resolves that to a name via the original `countries.csv`,
+then finds the current country with that name and updates the live row —
+same name-remapping idea as the address fix, just keyed off the row's own
+id instead of the (missing) old foreign key. Verified in Postgres 16 with
+a synthetic India/US case reproducing the actual bug (live rows present
+with real `id`s, `country_id` genuinely `NULL`): 0 resolved before, all 3
+resolved correctly by name after (`Asia/Kolkata` → India,
+`America/New_York`/`America/Chicago` → United States).
 
 Usage:
 ```bash
 DB_PASSWORD=... bash fix-timezones-country-links.sh user_management_old_restore ./clean/user_management
 ```
-The script prints a before/after count of how many `time_zones` rows
-resolve against the current `countries` table — `still_broken` should be
-0 (or very close) afterward. Same caveat as the address fix: a historical
-country name with no exact match in the current table won't resolve.
+(needs `countries.csv` **and** `time_zones.csv` in that directory now,
+not just `countries.csv`). The script prints a before/after count of how
+many `time_zones` rows resolve against the current `countries` table —
+`still_broken` should be 0 (or very close) afterward. Same caveat as the
+address fix: a historical country name with no exact match in the current
+table won't resolve.
 
 ## Key problem found: "migration script not importing the complete DB"
 
