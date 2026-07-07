@@ -1,0 +1,30 @@
+module.exports = {
+  ALL_SUB_MODULES: [
+    { name: "Leave Type", key: "leave_type", main_module_key: "leave_management", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Assign Leave", key: "assign_leave", main_module_key: "leave_management", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Users Leave", key: "user_leave", main_module_key: "leave_management", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Leave Request", key: "leave_request", main_module_key: "leave_management", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: true, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Apply leave", key: "apply_leave", main_module_key: "leave_management", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: true, is_student_module: true, is_librarian_module: true, is_parent_module: true },
+
+    { name: "exam", key: "exam", main_module_key: "offline_exam", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Exam schedule", key: "exam_schedule", main_module_key: "offline_exam", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: true, is_student_module: true, is_librarian_module: false, is_parent_module: true },
+    { name: "manage_exam", key: "manage_exam", main_module_key: "offline_exam", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "exam_result", key: "exam_result", main_module_key: "offline_exam", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: true, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Upload Exam Marks", key: "upload_exam_marks", main_module_key: "offline_exam", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: false, is_teacher_module: true, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Result", key: "result", main_module_key: "offline_exam", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: false, is_teacher_module: false, is_student_module: true, is_librarian_module: false, is_parent_module: true },
+    { name: "Manage exam grade", key: "manage_exam_grade", main_module_key: "offline_exam", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: true, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+
+    { name: "Session Year", key: "session_year", main_module_key: "session_year", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+
+    { name: "Notice list", key: "list_notice", main_module_key: "notice_board", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: true, is_teacher_module: true, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "My Notice", key: "my_notice", main_module_key: "notice_board", is_super_admin_module: false, is_organization_module: false, is_branch_organization_module: false, is_teacher_module: true, is_student_module: true, is_librarian_module: true, is_parent_module: true },
+
+    { name: "Email Templates", key: "templates", main_module_key: "email_notifications", is_super_admin_module: true, is_organization_module: true, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Send Notification", key: "send_email_notifications", main_module_key: "email_notifications", is_super_admin_module: true, is_organization_module: true, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+
+    { name: "Salary Templates", key: "salary_templates", main_module_key: "payroll", is_super_admin_module: false, is_organization_module: true, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Assignment of Salary Templates", key: "salary_template_assignment", main_module_key: "payroll", is_super_admin_module: false, is_organization_module: true, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "Salary Payment", key: "salary_payment", main_module_key: "payroll", is_super_admin_module: false, is_organization_module: true, is_branch_organization_module: true, is_teacher_module: false, is_student_module: false, is_librarian_module: false, is_parent_module: false },
+    { name: "My Salaryslips", key: "my_salaryslips", main_module_key: "payroll", is_super_admin_module: false, is_organization_module: true, is_branch_organization_module: true, is_teacher_module: true, is_student_module: false, is_librarian_module: true, is_parent_module: false }
+  ]
+};

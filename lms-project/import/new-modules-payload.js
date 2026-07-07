@@ -1,0 +1,52 @@
+module.exports = {
+  ALL_MODULES: [
+    {
+      name: "Leave Management",
+      description: "leave_management",
+      key: "leave_management",
+      is_super_admin_module: false,
+      is_organization_module: true,
+      is_default_module: false,
+    },
+    {
+      name: "Examination",
+      description: "Examination",
+      key: "offline_exam",
+      is_super_admin_module: false,
+      is_organization_module: true,
+      is_default_module: false,
+    },
+    {
+      name: "Session Year",
+      description: "Session Year",
+      key: "session_year",
+      is_super_admin_module: false,
+      is_organization_module: true,
+      is_default_module: false,
+    },
+    {
+      name: "Notice Board",
+      description: "Notice Board",
+      key: "notice_board",
+      is_organization_module: true,
+      is_default_module: false,
+      is_super_admin_module: false,
+    },
+    {
+      name: "Email Notification",
+      description: "Email Notification",
+      key: "email_notifications",
+      is_organization_module: true,
+      is_default_module: true,
+      is_super_admin_module: true,
+    },
+    {
+      name: "Payroll",
+      description: "Create salary templates, assign salary templates to employees, salary payment, view/download salary slips",
+      key: "payroll",
+      is_organization_module: true,
+      is_default_module: false,
+      is_super_admin_module: false,
+    },
+  ],
+};

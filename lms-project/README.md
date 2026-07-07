@@ -564,34 +564,81 @@ matching logic in `sidebar.tsx`/`ProtectedRoute`) found:
   deployed/seeded). `assignment`'s own sub_modules were commented out too,
   which is why its main_module existed with zero children.
 
-**Fix**: `import/enableNewModules.js` — deploy into usermgmt's
-`app/scripts/` (needs that app's Sequelize models/config, so it can't run
-standalone). Hardcodes the recovered (uncommented) module/sub_module data
-directly rather than depending on the stale deployed data files. Diffs
-against the DB by `key`, inserts only what's missing, and grants default
-Read permission per sub_module's actual role flags — `org_admin`,
-`org_branch_admin`, `teacher`, `student`, `parent`, `librarian` (`super_admin`
-is skipped; it already sees every sub_module dynamically via the SUPER
-ADMIN BYPASS in `user.controller.js`). Purely additive — existing rows are
-never touched, and a second run is a no-op. Verified against a mock DB
-seeded to match production's exact current module list (29 main_modules /
-27 sub_modules) — one run correctly inserted 6 main_modules, 25 deduped
-sub_modules (the source data defines `session_year` twice, identically),
-and 51 correctly role-mapped `default_role_permissions` (e.g. `apply_leave`
-→ branch_admin/teacher/student/parent/librarian but *not* org_admin,
-matching its actual flags); a second run found and inserted nothing.
+**The real fix turned out to already exist and be already deployed**: a
+`POST /v1/role-permission/add-new-module` endpoint
+(`addNewModule` in `rolePermission.controller.js`, marked `// script for
+new module add`) that bulk-inserts whatever's currently in
+`ALL_MODULES`/`ALL_SUB_MODULES`, generates `default_role_permissions` from
+per-key whitelists (already correctly updated for every key these 6
+modules need — the developer had fully prepared this, just never
+triggered it), and then backfills `roles_and_permissions` for every
+**existing** organization/branch and `users_permissions` (disabled by
+default) for every existing staff account. Confirmed via `git log`/`git
+blame` on `lms-backend-usermgmt` (the `staging` branch, real commit
+history) that this is the exact mechanism used to create every
+already-working multi-item module, most recently Payroll
+(commit `8fb8cb3`, "Created Payroll Module").
 
-Usage (on the server, inside usermgmt's `app/` directory):
+Two important wrinkles found before touching anything:
+
+1. **`addNewModule` has no existence-check** — it unconditionally
+   `bulkCreate`s whatever's in the data files. The staging server's
+   deployed `modules.js`/`sub_modules.js` are a diverged, hand-maintained
+   flat snapshot (not deployed from this repo — confirmed staging's own
+   `/home/staging/lms-backend-usermgmt-staging` isn't even a git checkout)
+   containing **all 33 modules already active**, not just the 6 missing
+   ones. Calling the endpoint as-is would have re-created all 29
+   already-existing modules as duplicates — the exact bug `dedup-modules.sh`
+   already fixed once. Fix: replace the server's two data files with
+   minimal versions containing *only* the 6 new main_modules / 21 new
+   sub_modules before calling the endpoint (`import/new-modules-payload.js`,
+   `import/new-sub-modules-payload.js`).
+2. **`addNewModule` resolves each sub_module's `main_module_id` only from
+   the batch of main_modules it just created in that same call** — it
+   never looks up pre-existing ones. Since `assignment`'s main_module
+   already exists, including its sub_modules in the endpoint call would
+   crash (`mainModuleObj[0].id` on an empty array). Fix:
+   `import/addAssignmentSubModules.js` — a small separate script that
+   inserts just `assignment`'s 4 sub_modules directly, mapping the same
+   per-role flags to `default_role_permissions`.
+
+Both verified in a mock harness reproducing the endpoint's actual
+bulk-create/resolve logic and production's exact current module list: the
+endpoint-equivalent call correctly produces 35 main_modules / 48
+sub_modules with no crashes, and `addAssignmentSubModules.js` then adds
+the remaining 4 sub_modules + 7 correctly role-mapped permissions,
+idempotently.
+
+Deployment sequence (on the staging server):
 ```bash
-cp enableNewModules.js scripts/enableNewModules.js
-node scripts/enableNewModules.js --dry-run   # review first
-node scripts/enableNewModules.js              # apply
+# 1. Back up first — the endpoint has no transaction wrapping and no
+#    idempotency guard, so it must only be called once.
+pg_dump ... > backup_before_new_modules.sql   # both usermgmt and super_admin DBs
+
+# 2. Back up and replace the two data files with the minimal payload
+cd /home/staging/lms-backend-usermgmt-staging/app
+cp public/defaultData/modules.js public/defaultData/modules.js.bak
+cp public/defaultData/sub_modules.js public/defaultData/sub_modules.js.bak
+cp /path/to/new-modules-payload.js public/defaultData/modules.js
+cp /path/to/new-sub-modules-payload.js public/defaultData/sub_modules.js
+
+# 3. Restart so the edited files actually load (require() is cached)
+pm2 restart stag-usermgmt-backend
+
+# 4. Trigger it — no gateway route exists for this path, call it directly
+curl -X POST http://localhost:3001/v1/role-permission/add-new-module
+
+# 5. Add assignment's sub_modules (can't go through the endpoint above)
+cp addAssignmentSubModules.js scripts/addAssignmentSubModules.js
+node scripts/addAssignmentSubModules.js --dry-run   # review first
+node scripts/addAssignmentSubModules.js              # apply
 ```
 
-Note: `default_role_permissions` is role-wide, not per-org — whether a
-given organization actually sees these modules also depends on that org's
-subscribed plan including the corresponding `main_module_id` in
-super_admin's `plan_modules`. Check/add that separately per plan if needed.
+Note: `roles_and_permissions`/`users_permissions` backfill is per-org, so
+whether a given organization actually sees these modules also still
+depends on that org's subscribed plan including the corresponding
+`main_module_id` in super_admin's `plan_modules`. Check/add that
+separately per plan if needed.
 
 ## Layout of this folder
 
@@ -621,11 +668,17 @@ lms-project/
     dedup-modules.sh               - collapses duplicate main_modules/sub_modules (every
                                       module seeded twice) back to one row each, remapping
                                       all FK references first
-    enableNewModules.js            - deploy into usermgmt's app/scripts/: inserts the 6 fully-built
-                                      but never-seeded modules (leave_management, offline_exam,
+    new-modules-payload.js         - replaces usermgmt's public/defaultData/modules.js before
+                                      calling POST /v1/role-permission/add-new-module: only the
+                                      6 never-seeded main_modules (leave_management, offline_exam,
                                       session_year, notice_board, email_notifications, payroll)
-                                      plus assignment's sub_modules, with per-dropdown-item
-                                      granularity and correct per-role default permissions
+    new-sub-modules-payload.js     - replaces public/defaultData/sub_modules.js the same way:
+                                      only those 6 modules' 21 sub_modules, per-dropdown-item
+                                      granularity, correct per-role flags
+    addAssignmentSubModules.js     - deploy into usermgmt's app/scripts/: adds assignment's 4
+                                      missing sub_modules directly (can't go through
+                                      add-new-module since assignment's main_module already
+                                      exists) plus correct per-role default permissions
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
     CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
