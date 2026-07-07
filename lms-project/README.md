@@ -496,6 +496,40 @@ Two things to know before importing — full detail in
 both of the above via flags; see that script and
 `import/OLD_DB_ANALYSIS.md` for exact usage.
 
+## ⚠ Fixed: duplicate `main_modules`/`sub_modules` (every module seeded twice)
+
+Found while testing role-permission lists: usermgmt's `main_modules`/
+`sub_modules` each had **two full copies** of every module (same
+name/key, different ids) — same root cause class as the regional-data
+reseed bug above (a seed step, `addDefaultModules`, that didn't correctly
+detect "already exists" on some earlier run before the pattern was
+fixed). This showed up as duplicate entries in module listings and
+duplicate keys in `rolePermission` arrays (e.g. `organization_list`
+appearing twice).
+
+**Fix**: `import/dedup-modules.sh` — for each duplicate group (by
+`key`), keeps the lowest-id row as canonical, remaps every FK reference
+(`sub_modules.main_module_id`/`menu_main_module_id`,
+`default_role_permissions.sub_module_id`,
+`roles_and_permissions.sub_module_id`, `users_permissions.sub_module_id`)
+to the canonical row, de-duplicates any resulting duplicate permission
+rows, then deletes the now-unreferenced extras. Also remaps the
+*unenforced* cross-database reference `super_admin`'s
+`plan_modules.main_module_id` (not a real FK, but still points at these
+ids, and would silently break plan→module resolution otherwise). Runs
+inside a transaction per database. Verified end-to-end in Postgres 16
+against synthetic data reproducing the exact pattern (duplicate main
+module + subs, duplicate permission rows across three tables, a
+cross-database `plan_modules` reference to a to-be-deleted duplicate) —
+every table collapsed to one row per unique relationship with no data
+loss, and the cross-database reference correctly followed the surviving
+canonical id.
+
+Usage:
+```bash
+DB_PASSWORD=... bash dedup-modules.sh user_management_old_restore super_admin_old_restore
+```
+
 ## Layout of this folder
 
 ```
@@ -521,6 +555,9 @@ lms-project/
     fix-timezones-country-links.sh - repairs time_zones.country_id after the same reseed
                                       (this is the one that actually fixes the org-create
                                       TimeZone dropdown)
+    dedup-modules.sh               - collapses duplicate main_modules/sub_modules (every
+                                      module seeded twice) back to one row each, remapping
+                                      all FK references first
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
     CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
