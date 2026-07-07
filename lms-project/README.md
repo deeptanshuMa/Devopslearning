@@ -530,38 +530,62 @@ Usage:
 DB_PASSWORD=... bash dedup-modules.sh user_management_old_restore super_admin_old_restore
 ```
 
-## ⚠ Fixed: modules added to the seed data files after the original seed ran were never inserted
+## ⚠ Fixed: 6 fully-built modules were never seeded — deliberately staged, not a bug
 
 Found while investigating "org branch admin dashboard is missing Assignment,
-Session Year, Payroll, Notice Board, etc." `public/defaultData/modules.js`/
-`sub_modules.js` (usermgmt) define more modules than actually exist in the
-live DB: 6 main_modules — `leave_management`, `offline_exam`, `session_year`,
-`notice_board`, `email_notifications`, `payroll` — plus their sub_modules,
-plus `assignment`'s own sub_module (its main_module row already existed,
-but with zero children), were completely absent. Root cause: the
-`existingModules > 0 ⇒ skip` guard added to stop the duplicate-reseed bug
-also means the seed only ever runs once — anything appended to those data
-files afterwards is silently never inserted.
+Session Year, Payroll, Notice Board, etc." An initial hypothesis (that
+`public/defaultData/modules.js`/`sub_modules.js` just needed a flat,
+one-sub_module-per-main_module catch-up insert, mirroring the shape of the
+STAGING server's deployed data files) turned out to be wrong — a deep dive
+across `lms-backend-usermgmt`, `lms-backend-org`, `lms-org-frontend`, and
+`lms-react-super-admin-frontend` (frontend pages/routes, backend
+models/controllers/services/routes, and the actual role-permission
+matching logic in `sidebar.tsx`/`ProtectedRoute`) found:
 
-**Fix**: `import/syncMissingModules.js` — deploy into usermgmt's
+- Every already-working multi-item module (`organization_structure`,
+  `library_management`, `attendance`, etc.) actually has **one sub_module
+  row per dropdown item** (e.g. `organization_structure` has 7: `department`,
+  `room`, `class`, `section`, `subject`, `assign_subject`,
+  `assign_class_teacher`), each with its own
+  `is_organization_module`/`is_branch_organization_module`/`is_teacher_module`/
+  `is_student_module`/`is_parent_module`/`is_librarian_module` flags — not
+  one flat row per top-level menu item. The deployed data file didn't have
+  that granularity for the 6 missing modules at all.
+- `leave_management`, `offline_exam`, `session_year`, `notice_board`,
+  `email_notifications`, and `payroll` are **fully built end-to-end**: real
+  pages/API clients/Redux slices in the org frontend, and complete
+  models/controllers/services/routes/validation/Swagger docs in the org
+  backend. Nothing is unfinished.
+- The correct, granular seed data already existed — in the **local/dev**
+  checkout of usermgmt's `public/defaultData/modules.js`/`sub_modules.js`
+  (materially more complete than what's deployed to staging), every one of
+  these modules was fully authored with correct per-role flags, but
+  **commented out**, except `payroll` (staged as "next" but never actually
+  deployed/seeded). `assignment`'s own sub_modules were commented out too,
+  which is why its main_module existed with zero children.
+
+**Fix**: `import/enableNewModules.js` — deploy into usermgmt's
 `app/scripts/` (needs that app's Sequelize models/config, so it can't run
-standalone). Diffs the data files against the DB by `key`, inserts only
-what's missing, and grants default Read permission on the newly-added
-org-facing sub-modules to both `org_admin` and `org_branch_admin` via
-`default_role_permissions`. Purely additive — existing rows are never
-touched, and a second run is a no-op. Verified locally against a mock DB
+standalone). Hardcodes the recovered (uncommented) module/sub_module data
+directly rather than depending on the stale deployed data files. Diffs
+against the DB by `key`, inserts only what's missing, and grants default
+Read permission per sub_module's actual role flags — `org_admin`,
+`org_branch_admin`, `teacher`, `student`, `parent`, `librarian` (`super_admin`
+is skipped; it already sees every sub_module dynamically via the SUPER
+ADMIN BYPASS in `user.controller.js`). Purely additive — existing rows are
+never touched, and a second run is a no-op. Verified against a mock DB
 seeded to match production's exact current module list (29 main_modules /
-27 sub_modules) — one run correctly inserted the 6 missing main_modules, 7
-missing sub_modules, and 14 default_role_permissions (2 roles × 7
-modules), with `assignment`'s new sub_module correctly resolving to its
-pre-existing main_module rather than creating a duplicate; a second run
-found and inserted nothing.
+27 sub_modules) — one run correctly inserted 6 main_modules, 25 deduped
+sub_modules (the source data defines `session_year` twice, identically),
+and 51 correctly role-mapped `default_role_permissions` (e.g. `apply_leave`
+→ branch_admin/teacher/student/parent/librarian but *not* org_admin,
+matching its actual flags); a second run found and inserted nothing.
 
 Usage (on the server, inside usermgmt's `app/` directory):
 ```bash
-cp syncMissingModules.js scripts/syncMissingModules.js
-node scripts/syncMissingModules.js --dry-run   # review first
-node scripts/syncMissingModules.js              # apply
+cp enableNewModules.js scripts/enableNewModules.js
+node scripts/enableNewModules.js --dry-run   # review first
+node scripts/enableNewModules.js              # apply
 ```
 
 Note: `default_role_permissions` is role-wide, not per-org — whether a
@@ -597,10 +621,11 @@ lms-project/
     dedup-modules.sh               - collapses duplicate main_modules/sub_modules (every
                                       module seeded twice) back to one row each, remapping
                                       all FK references first
-    syncMissingModules.js          - deploy into usermgmt's app/scripts/: inserts main_modules/
-                                      sub_modules that exist in the seed data files but were
-                                      never seeded (added after the seed guard made it run-once),
-                                      and grants default org_admin/org_branch_admin permissions
+    enableNewModules.js            - deploy into usermgmt's app/scripts/: inserts the 6 fully-built
+                                      but never-seeded modules (leave_management, offline_exam,
+                                      session_year, notice_board, email_notifications, payroll)
+                                      plus assignment's sub_modules, with per-dropdown-item
+                                      granularity and correct per-role default permissions
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
     CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
