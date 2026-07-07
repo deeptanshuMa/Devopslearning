@@ -530,6 +530,45 @@ Usage:
 DB_PASSWORD=... bash dedup-modules.sh user_management_old_restore super_admin_old_restore
 ```
 
+## ⚠ Fixed: modules added to the seed data files after the original seed ran were never inserted
+
+Found while investigating "org branch admin dashboard is missing Assignment,
+Session Year, Payroll, Notice Board, etc." `public/defaultData/modules.js`/
+`sub_modules.js` (usermgmt) define more modules than actually exist in the
+live DB: 6 main_modules — `leave_management`, `offline_exam`, `session_year`,
+`notice_board`, `email_notifications`, `payroll` — plus their sub_modules,
+plus `assignment`'s own sub_module (its main_module row already existed,
+but with zero children), were completely absent. Root cause: the
+`existingModules > 0 ⇒ skip` guard added to stop the duplicate-reseed bug
+also means the seed only ever runs once — anything appended to those data
+files afterwards is silently never inserted.
+
+**Fix**: `import/syncMissingModules.js` — deploy into usermgmt's
+`app/scripts/` (needs that app's Sequelize models/config, so it can't run
+standalone). Diffs the data files against the DB by `key`, inserts only
+what's missing, and grants default Read permission on the newly-added
+org-facing sub-modules to both `org_admin` and `org_branch_admin` via
+`default_role_permissions`. Purely additive — existing rows are never
+touched, and a second run is a no-op. Verified locally against a mock DB
+seeded to match production's exact current module list (29 main_modules /
+27 sub_modules) — one run correctly inserted the 6 missing main_modules, 7
+missing sub_modules, and 14 default_role_permissions (2 roles × 7
+modules), with `assignment`'s new sub_module correctly resolving to its
+pre-existing main_module rather than creating a duplicate; a second run
+found and inserted nothing.
+
+Usage (on the server, inside usermgmt's `app/` directory):
+```bash
+cp syncMissingModules.js scripts/syncMissingModules.js
+node scripts/syncMissingModules.js --dry-run   # review first
+node scripts/syncMissingModules.js              # apply
+```
+
+Note: `default_role_permissions` is role-wide, not per-org — whether a
+given organization actually sees these modules also depends on that org's
+subscribed plan including the corresponding `main_module_id` in
+super_admin's `plan_modules`. Check/add that separately per plan if needed.
+
 ## Layout of this folder
 
 ```
@@ -558,6 +597,10 @@ lms-project/
     dedup-modules.sh               - collapses duplicate main_modules/sub_modules (every
                                       module seeded twice) back to one row each, remapping
                                       all FK references first
+    syncMissingModules.js          - deploy into usermgmt's app/scripts/: inserts main_modules/
+                                      sub_modules that exist in the seed data files but were
+                                      never seeded (added after the seed guard made it run-once),
+                                      and grants default org_admin/org_branch_admin permissions
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
     CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
