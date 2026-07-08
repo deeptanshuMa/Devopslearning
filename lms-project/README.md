@@ -693,6 +693,14 @@ lms-project/
                                       field label and validation message in the actual
                                       leave forms (assign/apply leave, leave type, leave
                                       request) was still blank -- 45 more keys added here
+    add-offline-exam-translations.sql - same pattern again for offline exam: only the 8
+                                      sidebar-level FE_OFFLINE_EXAM keys existed. Form
+                                      labels/placeholders/validation messages for
+                                      manageexam, manageExamGrade, examResult,
+                                      examschedule, uploadExamMarks were spread across 4
+                                      translation blocks -- FE_PLACHOLDER (+7 keys),
+                                      FE_OFFLINE_EXAM (+17 keys), FE_REQUIRED (+14 keys),
+                                      and FE_EXAM (didn't exist at all, +1 key)
     back_office_and_org_admin_permissions.sql - adds default_role_permissions: back_office
                                       (had ZERO permissions despite being an active,
                                       selectable role) gets a full accounts/admissions/
