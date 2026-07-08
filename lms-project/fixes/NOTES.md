@@ -445,3 +445,28 @@ const s3 = new AWS.S3(
 );
 ```
 ).
+
+## Fixed: Assign Salary Template Filter button permanently disabled for Branch Admin
+
+File: `lms-org-frontend/app/src/app/(hydrogen)/payroll/assign-salary-template/page.tsx`
+
+`formData.branch_id` only exists when `userRoleSlug === Roles.OrgAdmin` (see
+`initialFormData` construction). But the Filter button's `disabled` check used
+an unrelated flag `isStaffAdmin` (which actually tracks whether the *selected
+target role in the dropdown* is "Org Admin Staff", not the logged-in user's
+own role) to decide whether to require `branch_id`. For any non-OrgAdmin
+login (e.g. Branch Admin), `formData.branch_id` is always `undefined`, so
+`!formData.branch_id` was always `true`, permanently disabling Filter
+regardless of role selection.
+
+Fix: use the same `userRoleSlug === Roles.OrgAdmin || userRoleSlug === Roles.OrganizationAdminStaff`
+condition already used elsewhere in this file (initialFormData, and the
+branch-reset useEffect) to decide whether `branch_id` is required, instead of
+the unrelated `isStaffAdmin` flag.
+
+```
+- disabled={isStaffAdmin ? !formData.role_id : (!formData.role_id || !formData.branch_id)}
++ disabled={(userRoleSlug === Roles.OrgAdmin || userRoleSlug === Roles.OrganizationAdminStaff) ? (!formData.role_id || !formData.branch_id) : !formData.role_id}
+```
+
+Applied on staging, rebuilt, confirmed clean restart.
