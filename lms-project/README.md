@@ -688,6 +688,11 @@ lms-project/
     add-translations-en.sql        - adds missing FE_XXX translation blocks for the 6 new
                                       modules + patches FE_ASSIGNMENT's 3 missing sub-keys
                                       (fixes icon-only sidebar / "Create Undefined" buttons)
+    add-leave-management-translations.sql - the first pass above only added the 6
+                                      sidebar/menu-level FE_LEAVE_MANAGEMENT keys; every
+                                      field label and validation message in the actual
+                                      leave forms (assign/apply leave, leave type, leave
+                                      request) was still blank -- 45 more keys added here
     back_office_and_org_admin_permissions.sql - adds default_role_permissions: back_office
                                       (had ZERO permissions despite being an active,
                                       selectable role) gets a full accounts/admissions/
