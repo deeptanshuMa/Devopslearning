@@ -679,6 +679,30 @@ lms-project/
                                       missing sub_modules directly (can't go through
                                       add-new-module since assignment's main_module already
                                       exists) plus correct per-role default permissions
+    backfillAssignmentPermissions.js - deploy into usermgmt's app/scripts/: backfills
+                                      roles_and_permissions (existing orgs/branches) and
+                                      users_permissions (existing org_branch_admin_staff)
+                                      for assignment's 4 sub_modules, scoped via
+                                      sub_module_key IN (...) -- NOT the unscoped
+                                      addDefultPermissionsByOrganization/-Branch endpoints
+    add-translations-en.sql        - adds missing FE_XXX translation blocks for the 6 new
+                                      modules + patches FE_ASSIGNMENT's 3 missing sub-keys
+                                      (fixes icon-only sidebar / "Create Undefined" buttons)
+    back_office_and_org_admin_permissions.sql - adds default_role_permissions: back_office
+                                      (had ZERO permissions despite being an active,
+                                      selectable role) gets a full accounts/admissions/
+                                      records scope; org_admin gets 15 new read-only
+                                      cross-branch reporting keys (students, teacher, class,
+                                      attendance_report, exam_result, etc.) -- previously had
+                                      zero visibility into branch operational data
+    backfillBackOfficeAndOrgAdminPermissions.js - deploy into usermgmt's app/scripts/:
+                                      backfills roles_and_permissions for all existing
+                                      orgs+branches (back_office) / orgs (org_admin's new
+                                      keys only) and users_permissions for org_admin_staff,
+                                      following the same scoped-by-role_id pattern as
+                                      backfillAssignmentPermissions.js (several reused
+                                      sub_module_keys already existed for other roles, so a
+                                      blanket key filter would have double-counted)
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
     CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
