@@ -108,3 +108,18 @@ WHERE code = 'en';
 UPDATE languages
 SET messages = jsonb_set(messages, '{FE_PLACHOLDER,GREADE}', '"Enter grade (e.g. A, B+, C-)"'::jsonb)
 WHERE code = 'en';
+
+-- Follow-up: Manage Exam list's column headers used
+-- FE_OFFLINE_EXAM.EXAM_SCHEDULE_CREATED and .PUBLISH_RESULT (in a separate
+-- coulmns.tsx file not covered by the earlier audit of the offlineexam/
+-- shared folder) -- showed as blank headers with "Yes"/"No" values under them.
+UPDATE languages
+SET messages = jsonb_set(
+  messages,
+  '{FE_OFFLINE_EXAM}',
+  (messages -> 'FE_OFFLINE_EXAM') || '{
+    "EXAM_SCHEDULE_CREATED": "Exam Schedule Created",
+    "PUBLISH_RESULT": "Publish Result"
+  }'::jsonb
+)
+WHERE code = 'en';
