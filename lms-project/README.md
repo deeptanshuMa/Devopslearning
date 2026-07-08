@@ -691,18 +691,26 @@ lms-project/
     back_office_and_org_admin_permissions.sql - adds default_role_permissions: back_office
                                       (had ZERO permissions despite being an active,
                                       selectable role) gets a full accounts/admissions/
-                                      records scope; org_admin gets 15 new read-only
-                                      cross-branch reporting keys (students, teacher, class,
-                                      attendance_report, exam_result, etc.) -- previously had
-                                      zero visibility into branch operational data
+                                      records scope -- still live. Also originally added
+                                      15 read-only cross-branch reporting keys to org_admin,
+                                      but those were REVERTED (see revert_org_admin_permissions.sql)
+                                      -- the report screens don't show which branch each row
+                                      belongs to and have no branch filter, so read-only
+                                      "visibility" across branches was meaningless as built.
     backfillBackOfficeAndOrgAdminPermissions.js - deploy into usermgmt's app/scripts/:
                                       backfills roles_and_permissions for all existing
                                       orgs+branches (back_office) / orgs (org_admin's new
-                                      keys only) and users_permissions for org_admin_staff,
-                                      following the same scoped-by-role_id pattern as
+                                      keys only, since reverted -- see above) and
+                                      users_permissions for org_admin_staff, following the
+                                      same scoped-by-role_id pattern as
                                       backfillAssignmentPermissions.js (several reused
                                       sub_module_keys already existed for other roles, so a
                                       blanket key filter would have double-counted)
+    revert_org_admin_permissions.sql - undoes exactly the 15 org_admin keys above (not
+                                      back_office) after user feedback that cross-branch
+                                      read-only reports were confusing with no branch
+                                      context/filter -- ran on staging, confirmed org_admin
+                                      back to its original 18 default_role_permissions
     OLD_DB_ANALYSIS.md             - folder-by-folder breakdown of the old CSV export
     CSV_AUDIT.md                   - row-by-row data audit (row counts, FK integrity, encoding)
   fixes/
