@@ -92,3 +92,19 @@ SELECT jsonb_object_keys(messages -> 'FE_PLACHOLDER') FROM languages WHERE code 
 SELECT jsonb_object_keys(messages -> 'FE_OFFLINE_EXAM') FROM languages WHERE code = 'en';
 
 COMMIT;
+
+-- Follow-up fixes (same day):
+-- 1. FE_COMMON.OPTIONAL was missing entirely (used in 20 files app-wide,
+--    not offline-exam-specific) -- caused "Select Room (undefined)" on the
+--    exam schedule create page.
+-- 2. FE_PLACHOLDER.GREADE's placeholder text "Select grade" was misleading:
+--    the Grade field on Manage Exam Grade is a free-text Input (type a
+--    letter grade like "A"/"B+"), not a dropdown -- the wording made users
+--    think it was an empty/broken select. Reworded to "Enter grade (e.g. A, B+, C-)".
+UPDATE languages
+SET messages = jsonb_set(messages, '{FE_COMMON,OPTIONAL}', '"Optional"'::jsonb)
+WHERE code = 'en';
+
+UPDATE languages
+SET messages = jsonb_set(messages, '{FE_PLACHOLDER,GREADE}', '"Enter grade (e.g. A, B+, C-)"'::jsonb)
+WHERE code = 'en';
