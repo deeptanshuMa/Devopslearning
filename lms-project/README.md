@@ -530,6 +530,101 @@ Usage:
 DB_PASSWORD=... bash dedup-modules.sh user_management_old_restore super_admin_old_restore
 ```
 
+## ⚠ Fixed: bulk student import — a chain of 5 separate bugs
+
+Reported as "import fails" / "shows success but no students appear." Each
+fix uncovered the next; documenting the full chain since any one alone
+looked like "the" fix.
+
+1. **Template had no example data and was missing two required columns.**
+   The downloadable `student_data_example.xlsx` had only a header row, so
+   users guessed the wrong `section_name` format (bare `"A"` instead of
+   `"Grade 1 - A"`). It also had no `dob`/`nationality` columns even
+   though the import code reads both — omitting them doesn't error (both
+   columns are nullable), it silently sets every imported student's DOB to
+   the import timestamp. Rebuilt with 2 sample rows demonstrating the
+   correct format plus both columns
+   (`app/public/importDemoSheets/student_data_example.xlsx` on
+   `lms-backend-super-admin-staging`).
+
+2. **Duplicate `student_id` generation.** In org-backend's
+   `student.controller.js` `importStudents`, the per-row loop called
+   `generateStudentCode(student_code, ...)` but stored the result in a
+   different variable (`studentsid`) that was never fed back into
+   `student_code` — so every row after the first generated the *same*
+   "next" code, causing a unique-constraint violation on bulk-add. Fixed
+   by reassigning `student_code` itself each iteration.
+
+3. **Failures reported as success.** `othersAPIGatway` (org-backend's
+   axios wrapper) returns `{ errors: err }` on failure instead of
+   throwing. `importStudents` didn't check for that shape before
+   returning a `CREATED`/success response — so a genuinely failed
+   bulk-add was reported to the frontend as "Student imported
+   succesfully" with the real error buried in `data.errors`. Fixed by
+   checking `!Array.isArray(addedUsers) || addedUsers?.errors` right
+   after the call and returning a real failure response.
+
+4. **org-backend's `countries`/`states` seeded twice.** Once failures were
+   honestly reported, the real error surfaced:
+   `address.country_id` referenced an id that didn't exist in usermgmt's
+   own `countries` table. `organization_old_restore` had exactly 2x the
+   row counts of `user_management_old_restore` for `countries` (500 vs
+   250) and `states` (10168 vs 5084) — same reseed-duplication class as
+   the `main_modules`/`sub_modules` bug above, but a different service's
+   tables, and canonical selection has to match usermgmt's *existing* id
+   (not "lowest id wins") since `address` rows are validated against
+   usermgmt's own copy, not org-backend's.
+
+   **Fix**: `import/dedup-regional-data.sh` — exports usermgmt's
+   countries/states as the canonical source, maps each org-backend
+   duplicate to whichever id matches by name (states matched by `(name,
+   country_id)` once country_id is itself canonical), remaps
+   `organization_branches`/`time_zones`/`cities`'s FK columns, then
+   deletes the orphaned rows. Deployed and run on staging.
+
+   **Gotcha hit during rollout**: the first run correctly dropped
+   `countries` to 250, but left `states` at 5060 instead of 5084 — 12
+   `(name, country_id)` pairs are **genuinely duplicated inside
+   usermgmt's own canonical table** (Puerto Rico municipios, Taiwan
+   counties/cities, Zagreb — real data quirks, not a seeding artifact).
+   The plain equi-join used to build the id map fanned out on those 12
+   groups (each org row matched both sibling canonical ids), so the
+   delete step wiped out all 4 org rows per group instead of correctly
+   keeping 2 and dropping 2 orphans — a 24-row over-deletion. Recovered
+   by re-inserting those 24 rows (identical ids, all columns) straight
+   from usermgmt's `states` table. If re-running this script elsewhere,
+   check for this class of pre-existing duplicate in the *canonical*
+   source table before trusting the delete step, or dedup the canonical
+   table first.
+
+   Usage:
+   ```bash
+   DB_PASSWORD=... bash dedup-regional-data.sh user_management_old_restore organization_old_restore
+   ```
+
+5. **`transaction` variable not declared (`let`/`const`) in 5 functions in
+   usermgmt's `user.controller.js`** (`createUser`, `addBulkUser`,
+   `importRegionalData`, `updateRegionalDetails`, `checkRegionalDetails`).
+   Each did `transaction = await sequelize.transaction();` with no
+   declaration — an implicit global (no `"use strict"` in this file),
+   shared across **every concurrent request the process handles**, not
+   scoped to the call. Two overlapping requests (a slow import plus an
+   impatient retry/double-click is enough) could let one request's later
+   inserts, or its catch block's rollback, operate on a *different*
+   request's transaction object. This is almost certainly how a "Liam
+   Carter" test-student row kept reappearing after being deleted — a
+   prior failed import's `users` row survived a rollback that actually
+   rolled back a different, unrelated request's transaction.
+
+   **Fix**: added `let transaction;` right after each function's opening
+   line (before its `try`), so both the `try` and its paired `catch`
+   share one function-scoped binding instead of the process-wide global.
+   Patched directly on `lms-backend-usermgmt-staging/app/src/controllers/user.controller.js`
+   (backed up as `.bak`), `pm2 restart stag-usermgmt-backend`.
+
+After all 5 fixes, a full 20-student import completed successfully
+end-to-end with correct class/section assignment.
+
 ## ⚠ Fixed: 6 fully-built modules were never seeded — deliberately staged, not a bug
 
 Found while investigating "org branch admin dashboard is missing Assignment,
